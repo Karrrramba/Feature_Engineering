@@ -1,0 +1,1595 @@
+---
+title: "Clinical prediction models"
+author: "Michal Rackiewicz"
+format: pdf
+editor: visual
+---
+
+
+
+Predictive models for a non-numeric outcome should focus on the probability rather than classification!
+
+Format of predictive models:
+
+-   Transparent when expressed as regression equation
+
+-   Not possible for algorithms like random forest. Possibly best displayed as a graphic.
+
+-   Neural networks remain a black box.
+
+What is needed?
+
+-   Model should be fir for the purpose. Why is it needed? What will it be used for? How will it benefit patients?
+
+-   Estimated values need to be accurate and reliable.
+
+    -   Are the predictions closed to observed outcomes? -\> Calibration plots/statistics (F1, precision, accuracy, etc.)
+
+    -   Does the model discriminate the outcomes well? -\> AUROC
+
+Limitations of current research:
+
+-   poor quality dataset ( poorly measured predictors)
+
+-   insufficient sample size
+
+-   poor handling of continuous predictors and outcomes
+
+-   Inappropriate handling of missing data
+
+-   overfitting
+
+-   missing/faulty calibration
+
+Handling continuous variables:
+
+Categorizing , e.g. Age \<65 and \>65
+
+-   reduces predictive power to detect genuine relationships between predictors and outcome
+
+-   loss in information
+
+    -   Assumes different outcomes for individuals just below and just above threshold
+
+    -   cutpoints are data-driven -\> overfitting
+
+-   Categorizing of continuous variables is biologically implausible and leads to poor predictive power!
+
+    (<https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5026162/>)
+
+-   Decisions should be made based on risk outcome, not on individual's predictor variable (applies to all preditors).
+
+-   If threshold is needed, construct based on predicted risk, e.g. \> 5%
+
+Looking beyond calibration and discrimination
+
+A model, which distinguishes cancer patients to have high or very high risk is a very good model. However, both groups would be biopsied.
+
+Conversely, a model with 72% calibration might be miscalibrated only beyond a certain threshold, beyond which classification might not matter much (as treatment is the logical outcome for all individuals).
+
+-   Examine model prediction accuracy with bootstrapping:
+
+    -   Create 1000 bootstrap samples and construct model with the same approach.
+
+    -   For each bootstrap model, evaluate differences between bootstrap and original model. (scatter plot or metric)
+
+    -   Quantify mean absolute difference between original model and bootstrapped samples.
+
+    -   Plot model instability as scatter plot with 95% CI.
+
+# Statistical modeling with tidymodels
+```{r}
+library(modeldata)
+library(tidymodels)
+data(ames)
+```
+
+```{r}
+dim(ames)
+```
+
+```{r}
+head(ames)
+```
+
+```{r}
+ggplot(ames, aes(x = Sale_Price)) + 
+  geom_histogram(bins = 50, col= "white")
+```
+
+The distribution of house prices is right-skewed. An argument could be made that the outcome should be log-transformed.
+
+```{r}
+ggplot(ames, aes(x = Sale_Price)) + 
+  geom_histogram(bins = 50, col= "white") +
+  scale_x_log10()
+```
+
+Advantages:
+
+-   lower variance
+
+-   no negative sale prices
+
+-   no undue influence of predicted high prices on the model
+
+Diadvantages:
+
+-   model is more difficult to interpret
+
+-   model metrics like MRSE are also in log-scale (as are the residuals)
+
+```{r}
+ames <- ames %>% mutate(Sale_Price = log10(Sale_Price))
+```
+
+## Modeling fundamentals
+
+```{r}
+library(tidyverse)
+
+data(crickets, package = "modeldata")
+
+```
+
+```{r}
+names(crickets)
+
+ggplot(crickets, 
+       aes(x = temp, y = rate, color = species, pch = species, lty = species)) + 
+  # Plot points for each data point and color by species
+  geom_point(size = 2) + 
+  # Show a simple linear model fit created separately for each species:
+  geom_smooth(method = lm, se = FALSE, alpha = 0.5) + 
+  scale_color_brewer(palette = "Paired") +
+  labs(x = "Temperature [C]", y = "Chirp Rate (per minute)")
+```
+
+The data shows linear relationship between temperature and chirp rate for both cricket species.
+
+To fit a linear model we will use base R's ***lm()*** function.
+
+### Formulas
+
+The basic structure of a model is given by a symbolic formula:
+
+```{r}
+rate ~ temp + species
+```
+
+The term on the left is the outcome and the terms on the right side of the tilde are the predictors.
+
+Categorical variables like "species" should (or will automatically be by the model function) be encoded as indicator or so-called dummy variable with the first level as 0 and the second level as 1. For multi-level variables, four binary columns will be crated, as the fifth level is the logical consequence of 0 values in all four binary columns.
+
+For more on variable encoding see .
+
+Additionally, the formula offers more versatility:
+
+```{r}
+#In-line functions
+rate ~ log(temp)
+
+# Pure math can be added with the identity function I()
+rate ~ I((temp * 9/5) + 32 ) # C to F
+#  I() inhibits the interpretation of operators (+, -, /, *, ^) as formula operators
+```
+
+```{r}
+#| eval: false
+# Polynomials
+poly(x, 3) # adds linear, quandratic and cubic terms for vartiable x
+```
+
+Non-linear spline terms can be added with the ***splines*** package.
+
+
+### Interaction terms
+
+When doing linear modeling or ANOVA (also in nonlinear modeling, but the interpretation is different) it is useful to examine whether the effect of one variable on the outcome is dependent on the effect of another variable. Such influence is called an *interaction*.
+
+We simulate a dataset containing 40 individuals, 20 males and 20 females who have or have not received a treatment (10:10) and a continuous response variables by sampling from a normals distribution for each gender and treatment group.
+
+```{r}
+gender <- gl(n = 2, k = 20, labels = c("male", "female"))
+trt <- rep(rep(c("yes", "no"), each = 10), 2)
+set.seed(1)
+resp <- c(
+  rnorm(n = 20, mean = rep(c(15,10), each =10)),
+  rnorm(n = 20, mean = rep(c(10,15), each =10))
+  )
+dat <- data.frame(gender, trt, resp)
+```
+
+Let us see how the mean response varies between the groups of the respective main effect:
+
+```{r}
+aggregate(resp ~ gender, data = dat, mean)
+```
+
+```{r}
+aggregate(resp ~ trt, data = dat, mean)
+```
+
+Neither appears to have an effect on the response. Let us now see whether this is also true for their interaction.
+
+```{r}
+with(dat, tapply(resp, list(gender, trt), mean))
+```
+
+In the model formula interaction terms can be be indicated in three different forms:
+
+```{r}
+resp ~ trt + gender + trt:gender
+rate ~ (trt + gender)^2
+rate ~ trt * gender 
+```
+
+We can use the formula to visualize the interaction effects in form of a boxplot.
+
+```{r}
+boxplot(resp ~ gender * trt, data = dat)
+```
+ANOVA is a common method to analyze the effect of categorical variables on a continuous response.
+```{r}
+aov1 <- aov(resp ~ trt * gender, data = dat)
+summary(aov1)
+```
+We see that the main effects on their own are not significant, but their interaction is.
+```{r}
+# extract parameter coefficients
+coef(aov1)
+```
+```{r}
+model.tables(aov1, type = "means")
+```
+The coefficient for the intercept is the mean response value for trt = no and gender = male. The coefficient of trtyes is what is added to the intercept for trt = yes and gender = male. 
+
+if we fit a linear model to the data, we obtain similar results;
+```{r}
+lm1 <- lm(resp ~ trt * gender, data = dat)
+summary(lm1)
+```
+Notice, that all effects are significant, i.e. significant from 0 (= Null hypothesis). It does not mean that the main effects are significant.
+
+
+### Comparing models
+Coming back to the cricket example we will fit a two-way interaction model.
+```{r}
+interaction_fit <-  lm(rate ~ (temp + species)^2, data = crickets) 
+
+interaction_fit
+```
+Before using any inferential results, we should inspect the model fit visually. Here, we can simply use the plot() function on a lm model.'
+```{r}
+# Place two plots next to one another:
+par(mfrow = c(1, 2))
+
+# Show residuals vs predicted values:
+plot(interaction_fit, which = 1)
+
+# A normal quantile plot on the residuals:
+plot(interaction_fit, which = 2)
+```
+
+
+
+#### Using ANOVA to compare models
+
+We can also use ANOVA to assess whether the model performs better with or without the interaction term.
+```{r}
+# Fit a reduced model:
+main_effect_fit <-  lm(rate ~ temp + species, data = crickets) 
+
+# Compare the two:
+anova(main_effect_fit, interaction_fit)
+```
+The p-value of 0.25 implies that there is sufficient evidence to not reject the null hypothesis, i.e. the interaction term is not needed.
+
+```{r}
+# Place two plots next to one another:
+par(mfrow = c(1, 2))
+
+# Show residuals vs predicted values:
+plot(main_effect_fit, which = 1)
+
+# A normal quantile plot on the residuals:
+plot(main_effect_fit, which = 2)
+```
+We can also use the summary() method to insepect the coefficients, standard errors and p-values of all model terms
+```{r}
+summary(main_effect_fit)
+```
+Here is how to interpret the results:
+- The chirp rate for each species increases by 3.6 for each single degree increase of temp.
+- The species term has a value of -10, indicating that the chirp rate per minute of O.niveus is 10 chirps lower than that of O.exclmationis across all temperatures.
+- The intercept indicates that for a temperature of 0 degrees there are -7 chirps -  which is problematic. The lowest recorded temperature is 17.2°C so the 0°C is an extrapolation.
+The model fit is good and the conclusions should be limited to the observed range.
+
+If we want to use the model to predict unknown events we can do so with the predict() function. Here we can also specify the temperature range:
+```{r}
+new_values <- data.frame(species = "O. exclamationis", temp = 15:20)
+predict(main_effect_fit, new_values)
+```
+
+
+
+```{r}
+# simple model without interaction
+lm1 <- aov(resp ~ trt * gender, data = dat)
+# model with interaction term
+lm2 <- aov(resp ~ (trt + gender)^2, data = dat)
+
+anova(lm1, lm2)
+```
+
+### Combining base R models with the tidyverse
+
+Basic R modeling functions can be integrated with many of the tidyverse functionalities.
+If we want to fit separate models for each species separately:
+```{r}
+split_by_species <- 
+  crickets %>% 
+  group_nest(species) 
+split_by_species
+```
+The data column contains rate and temp data in a list structure.
+From this format we can fit models by using the purrr::map() function.
+```{r}
+model_by_species <- 
+  split_by_species %>% 
+  mutate(model = map(data, ~ lm(rate ~ temp, data = .x)))
+model_by_species
+```
+We can now extract the model coefficients with the broom::tidy() which converts them to a data frame format.
+```{r}
+model_by_species %>% 
+  mutate(coef = map(model, tidy)) %>% 
+  select(species, coef) %>% 
+  unnest(cols = c(coef))
+```
+
+Just like the tidyverse, tidymodels is a metapackage and as such, namespace conflicts may arise. Luckily, tidymodels offers a handy function to resolve these.
+```{r}
+tidymodels_prefer()
+```
+
+
+## Splitting data
+
+The primary approach for model validation is to split the existing data into tow distinct sets: the training set and the test set. 
+The training set, representing the majority of the data, is used for model development and optimization while the test set is only used to for validation of model efficacy. Exploratory data analysis, feature engineering, testing different models, feature selection etc. are all performed on the training set.
+It is critical to look at the test set only once, otherwise it becomes part of the training set.
+
+We can use the rsample::initial_split() function to split a dataset into training and test sets, as well as specify the proportion of data going into each set.
+
+```{r}
+nrow(ames)
+```
+```{r}
+# Here we use 80% of the data for training and 20% for testing.
+ames_split <- initial_split(ames, prop = 0.8)
+ames_split
+```
+The object ames_split contains the partitioning information. In order to create the respective datasets, we need to apply the training() and testing() functions to our dataset. These create the respective data frames with 
+```{r}
+ames_train <- training(ames_split)
+ames_test <- testing(ames_split)
+ames_test
+```
+
+Data splitting by random sampling may not always be appropriate. 
+In cases where the dataset is imbalanced,  for example, random sampling might split the data disproportionally. This can result in overfitting and poor model performance. 
+To avoid this, we can employ stratified sampling. Here, the outcome is split proportionally with regard to the outcome. For classification problems, data is split within each class, while continuous variables are split into quartiles first. This ensures similar distribution of outcomes between the training and the test set. When working with longitudinal data (repeated measurements), e.g. in a medical trial,  stratification should be performed on the individual subject level. 
+
+```{r}
+#| eval: false
+
+ames_strat_split <- initial_split(ames, prop = 0.8, 
+                            strata = Sale_Price)
+```
+
+For time series data the rsample package offers an initial_time_split() function, which is similar to to initial_split(). The "prop" argument is used to define the proportion of the initial data used for training. Pay attention to how the data is ordered!
+It is best practice to use the most recent time interval for testing.
+
+### Validation sets
+As we only want to use the test set once, how can we measure performance without it? If we repeatedly measure performance on the training data, the model with adjust too well to the data and overfit. To combat this, we can set aside a small portion of the training dataset  - the validation dataset. Splitting the initital dataset ionto training, validation and test sets can be achieved with the initital_validation_split() function.
+```{r}
+#| eval: false
+ames_val_split <- initial_validation_split(ames, prop = c(0.6, 0.2)) # 60% testing, 20% validation, 20% test
+ames_val_split
+```
+Again, to create individual data frames, we need to apply the splitting information to the dataset.
+```{r}
+#| eval: false
+ames_val_train <- training(ames_val_split)
+ames_val_test <- testing(ames_val_split)
+ames_val <- validation(ames_val_split)
+```
+
+---------------------------
+
+## Fitting models 
+
+Suppose we want to fit a linear model. 
+For ordinary linear regression we can use the lm() function from the stats package:
+```{r}
+#| eval: false
+model <- lm(formula = , data = , ...)
+```
+
+For a regularized linear regression, where a penalty is added to each parameter to encourage simplicity, we can use the lasso or ridge regression from the `glmnet` package.
+```{r}
+#| eval: false
+model <- glmnet(x = matrix , y = vector, family = "gaussian", ...)
+```
+Here, the data must be formatted as matrix. There is no formula, but an x/y method. 
+
+The tidymodels environment searches to unify model inputs through a modular approach: 
+- specify the general mathematical structure of the model (lm, rt, knn, etc,)
+- specify the model engine/package (glmnet, ranger, etc.)
+- if required, specify the mode/outcome (if model engine allows for different outcomes, e.g. gpboost, rf)
+Note that the model is built without specifying the data to be used,
+```{r}
+linear_reg() %>% set_engine("lm")
+
+linear_reg() %>% set_engine("glmnet")
+
+```
+Depending on the specifications, the model can be applied to the data with the fit() or fit_xy() function. Note that parsnip is indifferent to the model interface in a sense that a formula is accepted even when x/y is required.
+The translate() function allows the user to check how the provided user input was translated into the package syntax.
+```{r}
+linear_reg() %>% set_engine("lm") %>% translate()
+```
+```{r}
+linear_reg(penalty = 1) %>% set_engine("glmnet") %>% translate()
+```
+Note that "missing arg" is just a placeholder for the data which has yet to be provided.
+
+Let us apply these approaches to predict house prices from the Ames data set.
+```{r}
+lm_model <- linear_reg() %>% 
+  set_engine("lm")
+
+# using formula
+lm_form_fit <- lm_model %>% 
+  fit(Sale_Price ~ Longitude + Latitude, data = ames_train)
+
+# using x/y
+lm_xy_fit <- lm_model %>% 
+  fit_xy(
+    x = ames_train %>% select(Longitude, Latitude),
+    y = ames_train %>% pull(Sale_Price)
+  )
+```
+
+```{r}
+lm_form_fit
+```
+
+```{r}
+lm_xy_fit
+```
+Tidymodels uses argument which may; differ from those in a given package, but are easier to understand,e.g. in a plot.
+For example, while the penalty parameter Lambda is commonly used in a glmnet regularization model, Lambda is standarized to "penalty".
+Similarly, arguments are also standardized across packages. RF models use parameters like Number of trees or Min node size albeit with different names. In tidymodels the expressions are unified to "trees" and "min_n".
+```{r}
+rand_forest(trees = 1000, min_n = 5) %>% 
+  set_engine("ranger") %>% 
+  set_mode("regression") %>% 
+  translate()
+```
+There are two classes of arguments:
+- Main arguments: are commonly used and standardized for all respective models.
+- Engine arguments: are specific to the model.
+
+In the above example, while given arguments "trees" and "min_n" were translated into "num.trees" and "min.node.size",  ranger-specific arguments like "num.threads" or "verbose" were added by default.
+Package-specific arguments can be set with the set_engine() function.
+```{r}
+rand_forest(trees = 1000, min_n = 5) %>% 
+  set_engine("ranger", verbose = TRUE) %>% 
+  set_mode("regression") 
+```
+The fit() function creates a parsnip object including the model, which can be extracted with the eaxtract_fit_engine() call:
+```{r}
+lm_form_fit %>% extract_fit_engine()
+```
+Additionally, normal methods like summary(), print() and plot() can be applied.
+```{r}
+lm_form_fit %>% 
+  extract_fit_engine() %>% 
+  summary()
+```
+The results from the model summary call can also be saved.
+```{r}
+model_res <- 
+  lm_form_fit %>% 
+  extract_fit_engine() %>% 
+  summary()
+
+# The model coefficient table is accessible via the `coef` method.
+param_est <- coef(model_res)
+class(param_est)
+
+# The result is a numeric matrix.
+param_est
+```
+For ease of use (e.g. easier plotting), the matrix can be transformed into a tidy format data frame using the tidy() function from the broom package,
+```{r}
+tidy(lm_form_fit)
+```
+
+
+### Making predictions
+
+Parsnips predict() function generates:
+- a tibble 
+- with predictable colnames (across different models) 
+- with the same number of rows as in the input dataset
+- keeping the original row order
+```{r}
+ames_test_small <- ames_test %>% slice(1:5)
+predict(lm_form_fit, new_data = ames_test_small)
+```
+Thus, we can easily merge the predictions with the input data.
+```{r}
+ames_test_small %>% 
+  select(Sale_Price) %>% 
+  bind_cols(predict(lm_form_fit, ames_test_small)) %>% 
+  # Add 95% prediction intervals to the results:
+  bind_cols(predict(lm_form_fit, ames_test_small, type = "pred_int")) 
+```
+
+## Model workflows with tidymodels
+
+Assuming a linear model with i = 1...n observations and p parameters with the form y = ß0 + ß1xi1 + ... + ßpxip a straightforward dataset may require only model fitting. For others, model fitting may require additional steps:
+- The initial dataset may have more than p predictors, some of which have been eliminated during EDA or through domain knowledge, or in the process of feature selection/regularization.
+- Observations may be missing initially and imputed.
+- Some predictors might require scaling or transformation.
+
+Some models may require post-processing, e.g. a classification model where the probability threshold is raised above 50% to reduce the number of false positives.
+
+The whole modelling process includes any preprocessing steps, model fitting as well as potential post-processing steps.
+In tidymodel's terminology a model workflow is equivalent to Pythons pipelines.
+
+### Workflow basics
+
+A workflow always requires a parsnip model object
+```{r}
+lm_wflow <- workflow() %>% add_model(lm_model)
+```
+
+At this point, no preprocessing has been specified.
+For a simple model, a formula can be simply added.
+```{r}
+lm_wflow <- lm_wflow %>% add_formula(Sale_Price ~ Longitude + Latitude)
+lm_wflow
+```
+The fit() method can be used to create models from workflows
+```{r}
+lm_fit <- fit(lm_wflow, ames_train)
+lm_fit
+```
+Similarly, the predict() function can be applied to the fitted workflow
+```{r}
+predict(lm_fit, ames_test %>% slice(1:3))
+```
+
+Model formulas can be altered/updated freely
+```{r}
+lm_fit %>% update_formula(Sale_Price ~ Longitude)
+```
+Besides formulas, model variables can be updated with the add_variables() function. Here, outcomes as well as predictors can be specified.
+```{r}
+lm_wflow <- 
+  lm_wflow %>% 
+  remove_formula() %>% 
+  add_variables(outcome = Sale_Price, predictors = c(Longitude, Latitude))
+lm_wflow
+```
+The add_variables() function uses a dplyr-like syntax.
+```{r}
+#| eval: false
+predictors = c(ends_with("tude"))
+```
+
+Any outcome variable will be removed automatically, thus we can select all variables at once with the use of everything().
+```{r}
+#| eval: false
+predictors = everything()
+```
+
+### Special formulas and inline functions
+
+Mixed models use standardized expressions to specify random effects.
+For example, to fit a regression model that has random effects for subjects, we would use the following formula:
+```{r}
+library(lme4)
+library(nlme)
+lmer(distance ~ Sex + (age | Subject), data = Orthodont)
+```
+
+Now each Subject will have an individual intercept and slope parameter for  the variable age.
+Since this notation is specific to mixed models, it cannot be processed by standard methods.
+In such case, a formula can be passed to a workflow with the add_model() function from the multilevelmod package.
+```{r}
+library(multilevelmod)
+
+multilevel_spec <- linear_reg() %>% set_engine("lmer")
+
+multilevel_workflow <- 
+  workflow() %>% 
+  # Pass the data along as-is: 
+  add_variables(outcome = distance, predictors = c(Sex, age, Subject)) %>% 
+  add_model(multilevel_spec, 
+            # This formula is given to the model
+            formula = distance ~ Sex + (age | Subject))
+
+multilevel_fit <- fit(multilevel_workflow, data = Orthodont)
+multilevel_fit
+```
+### Creating multiple models in parallel
+
+In some cases it is desirable to test several models at once:
+- When we want to evaluate different model types. This requires the creation of multiple model specifications.
+- When we want to sequentially test different sets of variables.
+
+The workflowset package creates combinations of workflow components. A list of preprocessors (e.g., formulas, dplyr selectors, or feature engineering recipe objects discussed in the next chapter) can be combined with a list of model specifications, resulting in a set of workflows.
+
+Assuming we want to test different representations of housing location from the Ames dataset.
+```{r}
+location <- list(
+  longitude = Sale_Price ~ Longitude,
+  latitude = Sale_Price ~ Latitude,
+  coords = Sale_Price ~ Longitude + Latitude,
+  neighborhood = Sale_Price ~ Neighborhood
+)
+```
+
+Using the workflow() function we can combine the list of location parameters with one or more models.
+```{r}
+library(workflowsets)
+location_models <- workflow_set(preproc = location, models = list(lm = lm_model))
+location_models
+```
+```{r}
+# Access specific model
+location_models$info[[1]]
+```
+```{r}
+extract_workflow(location_models, id = "coords_lm")
+```
+Workflow sets are a great approach for resampling methods.
+
+Using dplyr syntax we can fit each model with purrr's map() function and attach the results in a new column "fit".
+```{r}
+location_models <-
+   location_models %>%
+   mutate(fit = map(info, ~ fit(.x$workflow[[1]], ames_train)))
+location_models
+```
+
+```{r}
+location_models$fit[[1]]
+```
+### Evaluating the test set with tidymodels
+
+Once a final model is chosen, the last_fit() function offers a convenient way to fit the model to the entire training set and make predictions on the test set. The function takes the model and the dataset as inputs.
+```{r}
+final_lm_res <- last_fit(lm_wflow, ames_split)
+final_lm_res
+```
+The .workflow column contains the fitted workflow, which we can extracted with the extract_workflow() function.
+```{r}
+fitted_lm_wflow <- extract_workflow(final_lm_res)
+fitted_lm_wflow
+```
+Similarly, the collect_metrics() and collect_predictions() provide access to the performance metrics and predictions.
+```{r}
+collect_metrics(final_lm_res)
+collect_predictions(final_lm_res) %>% slice(1:5)
+```
+
+## Feature engineering with tidymodels
+
+The recipes package allows combining different feature engineering techniques and data transformations into one object. This obect can then be applied to different data sets.
+
+If we were to predict the housing price from the Ames data set, in formula notation we would formulate something like:
+```{r}
+lm(Sale_Price ~ Neighborhood + log10(Gr_Liv_Area) + Year_Built + Bldg_Type, data = ames)
+```
+
+In this notation the following steps are executed:
+- Sale price is defined as the outcome and all other variables are used as predictors 
+- Gross living area it transformed to log-scale
+- Neighborhood and building type are converted from non-numeric to numeric format
+
+A recipe is also an object that defines a sequence of data processing steps. Unlike the formula above the steps are defined via the step_*() functions without executing them.
+```{r}
+simple_ames <- 
+  # specify outcome and predictors
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type,
+         data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+    # transform qualitative predictors to quantitative
+  step_dummy(all_nominal_predictors())
+  # other dplyr-like selectors are:
+  # all_numeric_predictors()
+  # all_numeric()
+  # all_predictors()
+  # all_outcomes()
+simple_ames
+```
+We want to add our preprocessing recipe to the existing lm_workflow
+```{r eval=FALSE}
+lm_wflow %>% 
+  add_recipe(simple_ames)
+
+# returns following error:
+# Error in `add_recipe()`:
+# ! A recipe cannot be added when variables already exist.
+
+```
+To achieve this we must first remove the existing data preprocessing.
+```{r}
+lm_wflow
+```
+```{r}
+lm_wflow <- 
+  lm_wflow %>% 
+  remove_variables() %>% 
+  add_recipe(simple_ames)
+lm_wflow
+```
+We can now fit a model and make predictions
+```{r}
+lm_fit <- fit(lm_wflow, ames_train)
+
+predict(lm_fit, ames_test %>% slice(1:3))
+```
+
+The recipe and the model can be extracted with the extract_*() functions:
+```{r}
+lm_fit %>% extract_recipe(estimated = T)
+```
+```{r}
+lm_fit %>% 
+  extract_fit_parsnip() %>% 
+  tidy() %>% 
+  slice(1:5)
+```
+
+### Encoding qualitative variables
+
+When we look at the frequencies of the Neighborhood predictor, there are some neighborhoods with very few entries.
+```{r}
+ames_train %>% 
+  count(Neighborhood) %>% 
+  arrange(n) %>% 
+  ggplot(aes(x = Neighborhood, y = n)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(y = "count")
+```
+With the step_other() function we can coalesce infrequently occurring values.
+Adding step_other(Neighborhood, threshold = 0.01) to a recipe will transform the bottom 1% of the neighborhoods into a "other" level.
+
+```{r}
+simple_ames <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type,
+         data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors())
+```
+
+Anticipating new levels of a qualitative variable in an unseen data set, step_unknown() can be used to automatically create new levels for the variable.
+
+The step_dummy() function is used for creating dummy variables from qualitative variables. The one_hot argumentis used to eliminate the first column.
+The created column names use an underscore (Neighborhood_Greens). This makes it easier to use dplyr syntax (starts_with("Neighborhood_")) later on.
+
+
+### Interaction terms
+
+We can appreciate that the sale price in each neighborhood is dependent on the building type.
+```{r}
+ggplot(ames_train, aes(x = Gr_Liv_Area, y = 10^Sale_Price)) + 
+  geom_point(alpha = .2) + 
+  facet_wrap(~ Bldg_Type) + 
+  geom_smooth(method = lm, formula = y ~ x, se = FALSE, color = "lightblue") + 
+  scale_x_log10() + 
+  scale_y_log10() + 
+  labs(x = "Gross Living Area", y = "Sale Price (USD)")
+```
+We can account for this by simply adding an interaction between Neghborhood and Gross living area to our recipe with the step_interact() function:
+```{r}
+simple_ames <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type,
+         data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  # Gr_Liv_Area is on the log scale from a previous step
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") )
+```
+
+Additional interactions can be added using the + operator. 
+
+The step_interact() function uses base R code, thus using
+```{r}
+#| eval: false
+ step_interact( ~ Gr_Liv_Area:Bldg_Type)
+```
+on the raw categorical column Bldg_Type would automatically create dummy columns. Doing this might lead to unexpected results.
+
+
+### Adding splines 
+
+Some predictors might have a nonlinear relationship with the model. We can approximate such relationships by using splines.
+```{r}
+library(patchwork)
+library(splines)
+
+plot_smoother <- function(deg_free) {
+  ggplot(ames_train, aes(x = Latitude, y = 10^Sale_Price)) + 
+    geom_point(alpha = .2) + 
+    scale_y_log10() +
+    geom_smooth(
+      method = lm,
+      #  generate natural splines by using the ns() function
+      formula = y ~ ns(x, df = deg_free),
+      color = "lightblue",
+      se = FALSE
+    ) +
+    labs(title = paste(deg_free, "Spline Terms"),
+         y = "Sale Price (USD)")
+}
+
+( plot_smoother(2) + plot_smoother(5) ) / ( plot_smoother(20) + plot_smoother(100) )
+```
+As we want to avoid overfitting the data, the degrees of freedom ("wiggliness") must be tuned. This could be done during parameter tuning using grid search for example.
+
+We can add splines with the step_ns() function:
+```{r}
+recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + Latitude,
+         data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") ) %>% 
+  step_ns(Latitude, deg_free = 20)
+```
+
+### Feature extraction
+
+Feature extraction is used in methods like PCA, which tries to capture inforamtion from a broader set of predictors from the original data and projects it onto a smaller set of features. PCA is a linear extraction technique, in the sense that each new feature is a linear combination of the original features. An advantage of this technique is that the principal components are uncorrelated. 
+NOTE: PCA is only aware of the predictors, i.e. the PCA features may not be associated with the outcome!
+
+In the ames data set several predictors measure the property size in square feet. We can use PCA to reduce redundancy in our feature set.
+Since all of the mentioned predictors have the suffix "SF" in their names, a PCA step might look like this:
+```{r}
+#| eval: false
+  # Use a regular expression to capture house size predictors: 
+  step_pca(matches("(SF$)|(Gr_Liv)"))
+```
+
+In this example all predictor are on the same scale - which is crucial for any distance-based technique. If this was not the case, we might precede the PCA step with step_normalize().
+
+There are existing recipe steps for other feature extraction techniques like:
+- non-normal matrix factorization (NNMF)
+- uniform manifold approximation and projection (UMAP)
+- independent component analysis
+and others
+
+
+###Over- and undersampling
+
+In classification tasks where the outcome classes are unblanced techniques which oversample the minority class or undersample the majority class can be employed in order to enhance the training results. 
+
+The themis package offers several recipe options for each.
+```{r}
+library(themis)
+
+unbalanced_example_data <- data.frame(class = letters[rep(1:5, 1:5 * 10)],
+                                      x = rnorm(150))
+
+unbalanced_example_data %>%
+  ggplot(aes(class)) +
+  geom_bar()
+```
+#### Oversampling
+Following oversamlping steps are available:
+- Random minority over-sampling with replacement, step_upsample()
+- Synthetic Minority Over-sampling Technique, step_smote()
+- Borderline SMOTE-1, step_bsmote(method = 1)
+- Borderline SMOTE-2, step_bsmote(method = 2)
+- Adaptive synthetic sampling approach for imbalanced learning, step_adasyn()
+- Generation of synthetic data by Randomly Over Sampling Examples, step_rose()
+
+By setting over_ratio = 1 you bring the number of samples of all minority classes equal to 100% of the majority class.
+```{r}
+recipe(~., unbalanced_example_data) %>%
+  step_upsample(class, over_ratio = 1) %>%
+  prep() %>%
+  bake(new_data = NULL) %>%
+  ggplot(aes(class)) +
+  geom_bar()
+```
+
+By setting over_ratio = 0.5 we upsample any minority class with less samples then 50% of the majority up to have 50% of the majority.
+```{r}
+recipe(~., unbalanced_example_data) %>%
+  step_upsample(class, over_ratio = 0.5) %>%
+  prep() %>%
+  bake(new_data = NULL) %>%
+  ggplot(aes(class)) +
+  geom_bar()
+```
+#### Undersampling
+
+Themis offers three undersampling techniques:
+- Random majority under-sampling with replacement:	step_downsample()
+- NearMiss:	step_nearmiss()
+- Extraction of majority-minority Tomek links: step_tomek()
+
+By setting under_ratio = 1 you bring the number of samples of all majority classes equal to 100% of the minority class.
+```{r}
+recipe(~., unbalanced_example_data) %>%
+  step_downsample(class, under_ratio = 1) %>%
+  prep() %>%
+  bake(new_data = NULL) %>%
+  ggplot(aes(class)) +
+  geom_bar()
+```
+By setting under_ratio = 2 we downsample any majority class with more then 200% samples of the minority class down to have to 200% samples of the minority.
+```{r}
+recipe(~., unbalanced_example_data) %>%
+  step_downsample(class, under_ratio = 2) %>%
+  prep() %>%
+  bake(new_data = NULL) %>%
+  ggplot(aes(class)) +
+  geom_bar()
+```
+The sampling techniques from the themis package will only be applied to the training data but not the test data (see #Skipping steps below). 
+
+
+### Transformations
+
+Basic transformations can be performed via step_mutate()
+```{r}
+#| eval: false
+step_mutate(Bedroom_AbvGr / Full_Bath)
+```
+
+###NLP
+
+The textrecipes package offers many methods for natural language processing, like tokenization etc.
+
+
+### Skipping steps for new data
+
+Some training steps like oversampling or log-transformation or the outcome as outlined before, should not be applied to new data being predicted. 
+For this purpose each step function has the 
+```{r}
+#| eval: false
+skip
+```
+argument, which when set to TRUE, will be ignored by the predict() function.
+
+
+### Tidy a recipe
+We can apply the tidy() function not only to statistical objects but also to recipe objects,
+```{r}
+# Create recipe object
+ames_rec <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + 
+           Latitude + Longitude, data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") ) %>% 
+  step_ns(Latitude, Longitude, deg_free = 20)
+```
+
+Calling the tidy() function on a recipe object returns a summary of the recipe steps:
+```{r}
+tidy(ames_rec)
+```
+
+As we can see the IDs are composed of the step type and a random suffix. However, the step id can be set in advance for easy recognition (when a step is repeated).
+```{r}
+# set the id of step_other to "my_id"
+ames_rec <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + 
+           Latitude + Longitude, data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01, id = "my_id") %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") ) %>% 
+  step_ns(Latitude, Longitude, deg_free = 20)
+```
+
+
+```{r}
+lm_wflow <- 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(ames_rec)
+
+lm_fit <- fit(lm_wflow, ames_train)
+```
+
+Now, when we call the tidy() function again with the identifier we get the results of step_other(), i.e. which factor levels were retained and which were added to the new "other" category.
+```{r}
+estimated_recipe <- 
+  lm_fit %>% 
+  extract_recipe(estimated = TRUE)
+
+tidy(estimated_recipe, id = "my_id")
+```
+
+
+Additionally, we can also call each step from the tidy() function by the respective number.
+```{r}
+tidy(estimated_recipe, number = 2)
+```
+
+Calling tidy() on step_dummy() returns a column with the variables which were converted to dummy columns ("terms") and another column with all the known levels of each variable.
+```{r}
+tidy(estimated_recipe, number = 3)
+```
+
+
+### Assigning column roles
+
+Aside from the roles "predictor" or "outcome" we can assign other roles to columns in the data. Columns like the address in the Ames housing data may be useful to add after predictions have been made, e.g. to investigate in detail.
+In such cases, the functions add_role(), remove_role() and update_role() can be useful.
+```{r}
+#| eval: false
+ames_rec %>% update_role(address, new_role = "street address")
+```
+
+After this change, the address column in the dataframe will no longer be a predictor but instead will be a "street address" according to the recipe. Columns can have multiple roles (additional roles are added via add_role()) so that they can be selected under more than one context.
+
+
+## Model performance metrics and inference
+
+The effectiveness of any given model primarily depends on how the model will be used. An inferential model is used to understand relationships between variables and thus focuses on the probabilistic distributions and other generative qualities of the model.
+For a model which is used for predictions, predictive strength is of primary importance. 
+
+Am important notion is that predictive strength should always be tested, even if the model's primary goal is inference. For example, an Alzheimer's prediction model based on genomics data might include some interaction terms which contribute significantly to the model. These interactions could be used to form new hypotheses and research. However, without evaluating the predictive strength (e.g. accuracy) of the model we would not know if it is any better then making random predictions and thus of any use.
+
+#### Regression metrics
+Tidyverse's yardstick package produces performance metrics with consistent interfaces. The functions are data frame-based (as opposed to matrix-based like the models).
+```{r eval=FALSE}
+function(data, truth...)
+  #  data = data frame
+  #  truth = column with observed outcome
+```
+
+Let's take the lm_wflow_fit object from before. It was created from the ames_train data set and combines a linear regression model with an interaction and spline functions.
+First, we will make some predictions on the complementary test set.
+```{r}
+ames_test_res <- predict(lm_fit, new_data = ames_test %>% select(-Sale_Price))
+ames_test_res
+```
+```{r}
+# match predicted values with observed outcome
+ames_test_res <- bind_cols(ames_test_res, ames_test %>% select(Sale_Price))
+ames_test_res
+```
+```{r}
+# plot results
+ggplot(ames_test_res, aes(x = Sale_Price, y = .pred)) + 
+  # Create a diagonal line:
+  geom_abline(lty = 2) + 
+  geom_point(alpha = 0.5) + 
+  labs(y = "Predicted Sale Price (log10)", x = "Sale Price (log10)") +
+  # Scale and size the x- and y-axis uniformly:
+  coord_obs_pred()
+```
+```{r}
+# calculate model RMSE
+rmse(ames_test_res, truth = Sale_Price, estimate = .pred)
+```
+We can also compute several performance metrics at once with the metric_set() function:
+```{r}
+ames_metrics <- metric_set(rmse, rsq, mae)
+
+ames_metrics(ames_test_res, truth = Sale_Price, estimate = .pred)
+```
+Note that the outcome variable here (sale price) is on the log-scale and so are RMSE as well as MAE!
+
+### Binary Classification
+```{r}
+# load example classification data set
+data(two_class_example)
+tibble(two_class_example)
+```
+
+```{r}
+# A confusion matrix: 
+conf_mat(two_class_example, truth = truth, estimate = predicted)
+
+# Accuracy:
+accuracy(two_class_example, truth, predicted)
+
+# Matthews correlation coefficient:
+mcc(two_class_example, truth, predicted)
+
+# F1 metric:
+f_meas(two_class_example, truth, predicted)
+
+# Combining these three classification metrics together
+classification_metrics <- metric_set(accuracy, mcc, f_meas)
+classification_metrics(two_class_example, truth = truth, estimate = predicted)
+```
+The Matthews correlation coefficient is the best metric for classification algorithms as it scores all four categories of the confusion matrix, whereas F1 and accuracy - although widely popular - tend to overestimate model performance, especially in unbalanced data sets. The MCC is equivalent to a chi-square test for a 2x2 contingency table.
+
+The yardstick algorithm considers the first event level as the relevant one. This default can be changed in the function arguments:
+```{r}
+# set second level as event
+f_meas(two_class_example, truth, predicted, event_level = "second")
+```
+The receiver-operator characteristic (ROC) curve computes the sensitivity versus the specificity. 
+```{r}
+two_class_curve <- roc_curve(two_class_example, truth, Class1)
+two_class_curve
+```
+
+```{r}
+roc_auc(two_class_example, truth, Class1)
+```
+The two_class_curve object can be used in ggplot for visualization. For this we can simply pass it to a autoplot() call:
+```{r}
+autoplot(two_class_curve)
+```
+The farther away the curve is from the dotted line, the better are the predictions from random guessing.
+
+### Multi-level models
+```{r}
+# load example data set
+data(hpc_cv)
+tibble(hpc_cv)
+```
+
+Not all metrics can be applied directly to a multilevel classification outcome. Some require wrapper methods.
+Sesitivity (= true positive rate) is specific to two classes but can be applied to multiple classes with some modifications:
+- Macro-averaging computes one-vs-all metrics for each level as if for a two-class problem and averages these.
+```{r}
+sensitivity(hpc_cv, obs, pred, estimator = "macro")
+```
+- Macro-weighted averaging does the same but weights each by the number of samples in each level.
+```{r}
+sensitivity(hpc_cv, obs, pred, estimator = "macro_weighted")
+```
+- Micro-averaging computes the contribution from each class, aggregates them and computes a single metric.
+```{r}
+sensitivity(hpc_cv, obs, pred, estimator = "micro")
+```
+For an ROC curve all class predictions must be passed as arguments.
+```{r}
+roc_auc(hpc_cv, obs, VF, F, M, L)
+```
+Using dplyr grouping we can compute the desired metric for each level. 
+```{r}
+hpc_cv %>% 
+  group_by(Resample) %>% 
+  accuracy(obs, pred)
+```
+
+The grouping can alsobe applied to the autoplot() function:
+```{r}
+hpc_cv %>% 
+  group_by(Resample) %>% 
+  roc_curve(obs, VF, F, M, L) %>% 
+  autoplot()
+```
+
+
+## Evaluating and comparing models
+
+### Resubstitution (aka what not to do)
+The usage of the same data for making predictions as has been used before for training, is called resubstitution. 
+To demonstrate the result of this approach, we will first create a rf model using the same set of predictors as the linear model lm_fit and compare their performance - first with the resubstitution approach then with the testing set.
+
+Let's create the rf model
+```{r}
+library(ranger)
+
+rf_model <- 
+  rand_forest(trees = 1000) %>% 
+  set_engine("ranger") %>% 
+  set_mode("regression")
+
+rf_wflow <- 
+  workflow() %>% 
+  add_formula(
+    Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + 
+      Latitude + Longitude) %>% 
+  add_model(rf_model) 
+
+rf_fit <- rf_wflow %>% fit(data = ames_train)
+```
+
+Now let us compare the models using the resubstitution metric
+```{r}
+estimate_perf <- function(model, dat) {
+  # Capture the names of the `model` and `dat` objects
+  cl <- match.call()
+  obj_name <- as.character(cl$model)
+  data_name <- as.character(cl$dat)
+  data_name <- gsub("ames_", "", data_name)
+  
+  # Estimate these metrics:
+  reg_metrics <- metric_set(rmse, rsq)
+  
+  model %>%
+    predict(dat) %>%
+    bind_cols(dat %>% select(Sale_Price)) %>%
+    reg_metrics(Sale_Price, .pred) %>%
+    select(-.estimator) %>%
+    mutate(object = obj_name, data = data_name)
+}
+```
+
+```{r}
+estimate_perf(rf_fit, ames_train)
+
+estimate_perf(lm_fit, ames_train)
+```
+The RMSE for the rf model is twice as low as that of the linear model.
+Obviously, we would choose the rf model. Now let's apply it to the test set.
+```{r}
+estimate_perf(rf_fit, ames_test)
+```
+Now, the RMSE is twice as large. What happened? 
+Our model has learned the  training data very well and can now predict it almost perfectly. In statistical terms,  this is called "low bias".
+On the other hand, the model is much worse at predicting unseen data. The model has "high variance". 
+
+Let us look at how the linear model predicts the test set for comparison.
+```{r}
+estimate_perf(lm_fit, ames_test)
+```
+The linear model is less complex and much more consistent.
+
+Take home message: making predictions on already seen data will produce overly optimistic estimates of performance.
+
+Next we will look at some of the solutions to this problem.
+
+### Performance evaluation with resampling
+Resampling methods emulate the process of predicting the outcome based on unseen data from the training data set. Most resampling methods are iterative, i.e.e the process is repeated several times. For resampling, the training data set is divided into two subsamples: the analysis (fitting/training) and the assessment (evaluation/testing) sets. Just like with training and testing sets, the analysis and the assessment data are mutually exclusive.
+
+#### Cross-validation (CV)
+The most common cross-validation technique is V-fold cross-validation. Here, the data is randomly partitioned into V subsamples of roughly equal size, i.e. for a 3-fold CV of a 30-sample dataset, we would get 3 subsamples each containing randomly assigned 10 samples. 
+Cross-validation splits can and should be conducted with stratification, where applicable.
+For each iteration, one subsample (1/3 of the training data) is assigned as the analysis set while the remaining two (2/3 of the training data) are used as the assessment set. For each fold the algorithm creates  performance statistics, which are in the end averaged.
+Low numbers for V lead to poor model assessment. V-folds of 10 are usually suitable for good estimates.
+```{r}
+ames_fold <- vfold_cv(ames_train, v = 10)
+# stratification with the strata argument, additionally can specify bins with the breaks argument
+ames_fold
+```
+```{r}
+ames_fold$splits[[1]]
+```
+
+#### Repeated cross-validation
+Depending on the size of the dataset, estimates from the averaged cross-validation iterations may be noisy. To decrease noise and improve the accuracy of the model, we can enlarge the CV dataset by increasing the number of V-fold generation.
+To create repeats, we can simply add the repeats argument withing the vfold_cv() function.
+```{r}
+vfold_cv(ames_train, v = 10, repeats = 10)
+```
+
+#### Leave-one-out cross-validation (LOO-CV)
+If there are n samples in the training dataset, n models are fit, each with n-1 samples. For each iteration the 1 sample is used for prediction. In the end, all predictions are averaged to produce a single performance styatistic.
+
+LOO-CV is inferior to other CV variations. Except for very small sample sizes, LOO is too computationally excessive and performs poorly.
+
+#### Monte carlo cross-validation (MCCV)
+MCCV - just like V-fold CV - allocates a fixed proportion of data to the assessment set, but in MCCV this proportion (= sample IDs in the assessment set) is randomly chosen for each iteration. Thus, the assessment sets between iterations are not mutually exluclusive.
+```{r}
+mc_cv(ames_train, prop = 0.9, times = 10)$splits
+```
+
+#### Validation sets
+Validation sets are usually used when the initial dataset is very large. In such cases, a single data partition of adequate size may be sufficient for evaluation of model performance.
+```{r eval=FALSE}
+# create object used for resampling just like the one resulting from vfold_cv()
+val_set <- validation_set(ames_val_split)
+```
+
+#### Bootstrapping
+Bootstrapping aka resampling with substitution was originally intended for approximating an unknown sampling distribution.
+A bootstraped analysis data set has the same size as the original training sample but some data points are selected multiple times. The assessment sample is comprised of all data point which were left out of the analysis set (so called "out-of-bag" samples).
+```{r}
+bootstraps(ames_train, times = 5)$splits
+```
+
+Bootstrap samples have low variance, but tend to estimate higher bias, e.g. when true model accuracy is at 90%, the bootstrap would report <90% model accuracy.
+
+Bootstrapping is often employed by several algorithms like random forest.
+
+### Estimating performance
+All of the resampling techniques mentioned above separate data used for training from data used for model assessment.
+For any number n of resamples there will be n performance metrics. The final resampling estimate is the average of those performance metrics.
+
+Let's come back to the rf model from the beginning of this chapter. 
+Instead of fit() we can use fit_resamples(). 
+It can be used in several ways:
+```{r eval=FALSE}
+model_spec %>% fit_resamples(formula,  resamples, ...)
+model_spec %>% fit_resamples(recipe,   resamples, ...)
+workflow   %>% fit_resamples(          resamples, ...)
+```
+and with the following optional arguments:
+- metrics: specifies the model metrics to compute. By default, regression models use RMSE and R^2, while classifications use ROC and accuracy.
+- control: a list which can be created with the control_resamples() function. It has the following arguments:
+  - vorbose
+  - extract: retains objects from each model iteration
+  - save_pred: logical, saves the predictions from the assessment set
+```{r}
+# save predictions
+keep_pred <- control_resamples(save_pred = TRUE, save_workflow = TRUE)
+
+set.seed(1003)
+
+rf_res <- 
+  rf_wflow %>% 
+  fit_resamples(resamples = ames_fold, control = keep_pred)
+
+rf_res
+```
+Let us look at what each column contains
+```{r}
+rf_res$.metrics[[1]] #assessment set performance statistics 
+
+rf_res$.notes[[1]] #contains warnings or errors
+
+rf_res$.predictions[[1]] # out-of-sample predictions, only present when save_pred = TRUE 
+```
+The clunky list format can be easily reconfigured using tidyr functions.
+We can return a summary of the predictions in a much more usable format:
+```{r}
+collect_metrics(rf_res)
+```
+Compared with the resubstitution approach, using resampling offers much more realistic (and consistent) estimates.
+
+Let us extract the predictions and visualize the predictions vs. the truth.
+```{r}
+assess_res <- collect_predictions(rf_res)
+assess_res
+```
+Notice that the observed outcome column uses the original column name from the source data. 
+The .row column is an integer that matches the row of the original training set for easy row matching and merging with the original data frame.
+
+```{r}
+assess_res %>% 
+  ggplot(aes(x = Sale_Price, y = .pred)) + 
+  geom_point(alpha = .15) +
+  geom_abline(color = "red") + 
+  coord_obs_pred() + 
+  ylab("Predicted")
+```
+From the plot we can observe two predictions for the lowest sale price to be far off. Let us look at those two observations in detail.
+```{r}
+over_predicted <- 
+  assess_res %>% 
+  mutate(residual = Sale_Price - .pred) %>% 
+  arrange(desc(abs(residual))) %>% 
+  slice(1:2)
+over_predicted
+```
+Now we will use the .row column to identify these objects in the original data.
+```{r}
+ames_train %>% 
+  slice(over_predicted$.row) %>% 
+  select(Gr_Liv_Area, Neighborhood, Year_Built, Bedroom_AbvGr, Full_Bath)
+```
+#### Using parallelization
+Models created during resampling are independent of one another. The tune package uses the foreach package. 
+We can distribute the computations across  several processor cores with the parallel package:
+```{r}
+# The number of physical cores in the hardware:
+parallel::detectCores(logical = FALSE)
+```
+
+```{r}
+# The number of possible independent processes that can 
+# be simultaneously used:  
+parallel::detectCores(logical = TRUE)
+```
+For best results use fewer than the amount of physical cores.
+
+For fit_resamples() and other tune package functions, parallel processing can be used after registering a parallel backend package.
+For Unix systems, use the doMC package
+```{r eval=FALSE}
+library(doMC)
+registerDoMC(cores = 2)
+
+# Now run fit_resamples()...
+
+# reset to sequential processing
+registerDoSEQ()
+```
+
+For all operating systems use the doParallel package:
+```{r eval=FALSE}
+# All operating systems
+library(doParallel)
+
+# Create a cluster object and then register: 
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+
+# Now run fit_resamples()`...
+
+stopCluster(cl)
+```
+
+Parallelization provides linear speed ups for the first 4 to 5 cores. After this, the speed deteriorates.
+Note also that the memory requirements increase with the number of cores used. E.g. if the data set is 2 GB, the size increases to 8 GB when using 3 cores (2 GB for each core plus 2 for the original data). 
+
+#### Saving the resampled objects
+The trained models from resampling are not retained as they are only needed for evaluating performance.
+However, some of the model characteristics can be retained with the extract argument in the control_resamples() function. This argument takes one input, which when executed results in a fitted workflow object.
+
+To demonstrate this, we will first fit a linear regression model:
+```{r}
+ames_rec <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + 
+           Latitude + Longitude, data = ames_train) %>%
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") ) %>% 
+  step_ns(Latitude, Longitude, deg_free = 20)
+
+lm_wflow <-  
+  workflow() %>% 
+  add_recipe(ames_rec) %>% 
+  add_model(linear_reg() %>% set_engine("lm")) 
+
+lm_fit <- lm_wflow %>% fit(data = ames_train)
+
+# Select the recipe: 
+extract_recipe(lm_fit, estimated = TRUE)
+```
+We can save the linear model coefficients for a fitted model object from a workflow:
+```{r}
+get_model <- function(x) {
+  extract_fit_parsnip(x) %>% tidy()
+}
+
+# Test it using: 
+# get_model(lm_fit)
+```
+
+Now let’s apply this function to the ten resampled fits. The results of the extraction function is wrapped in a list object and returned in a tibble:
+```{r}
+ctrl <- control_resamples(extract = get_model)
+
+lm_res <- lm_wflow %>%  fit_resamples(resamples = ames_fold, control = ctrl)
+lm_res
+```
+Now there is a .extracts column with nested tibbles. What do these contain? Let’s find out by subsetting.
+```{r}
+lm_res$.extracts[[1]]
+```
+```{r}
+lm_res$.extracts[[1]][[1]]
+```
+
+## Comparing models with resampling
+There are two cases in which we would want to compare models:
+- within-model: where the same model is evaluated with different sets of features or preprocessing steps
+- between-model: where we compare different models, just like with lm and rf 
+
+In either case, the result is a collection of resampled summary statistics (RMSE, MCC, etc.) for each model.
+
+### Creating multiple models with workflow sets
+Earlier we crated a recipe with the Ames data set that included an interaction term and spline.
+We will now create three linear models, starting with the basic recipe and adding these data preprocessing steps incrementally. In this way we can test whether adding these terms improves the model.
+```{r}
+library(tidymodels)
+tidymodels_prefer()
+
+basic_rec <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + 
+           Latitude + Longitude, data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors())
+
+interaction_rec <- 
+  basic_rec %>% 
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") ) 
+
+spline_rec <- 
+  interaction_rec %>% 
+  step_ns(Latitude, Longitude, deg_free = 50)
+
+preproc <- 
+  list(basic = basic_rec, 
+       interact = interaction_rec, 
+       splines = spline_rec
+  )
+
+lm_models <- workflow_set(preproc, list(lm = linear_reg()), cross = FALSE)
+lm_models
+```
+
+Now, we want to resample each of those models. To do that we can use a purrr-like function called workflow_map().
+```{r}
+lm_models <- lm_models %>% 
+  workflow_map("fit_resamples",
+               seed = 1234, #for reproducibility
+               verbose = TRUE,
+               # set options for fit_resamples()
+               resamples = ames_fold, control = keep_pred)
+
+lm_models
+```
+The option column contains the options set for fit_resamples() while the results of fit_resamples() are stored in the result column.
+
+The collect_metrics() function makes retrieving summary statistics ver convenient:
+```{r}
+collect_metrics(lm_models) %>% 
+  filter(.metric == "rmse")
+```
+We can add additional models, like the rf model, by first converting it to a workflow set.
+```{r}
+four_models <- as_workflow_set(random_forest = rf_res) %>% 
+  bind_rows(lm_models)
+
+four_models
+```
+
+The autoplot() function creates confidence intervals for each model. We can specify any metric we want to plot.
+```{r}
+library(ggrepel)
+
+autoplot(four_models, metric = "rmse") +
+  geom_text_repel(aes(label = wflow_id), nudge_x = 1/8, nudge_y = 1/100) +
+  theme(legend.position = "none")
+```
+
+### Comparing resampled performance statistics
+While the rf model clearly outperforms the three linear models in terms of RMSE, there is very little difference between those. These differences might, however, be significantly larger than the experimental noise. Let us now test the hypothesis that the additional terms do improve the model.
+
+Let us compare how each resample performed across the models.
+```{r}
+library(corrr)
+
+rsq_indiv_estimates <- 
+  collect_metrics(four_models, summarize = FALSE) %>% 
+  filter(.metric == "rmse") 
+
+rsq_wider <- 
+  rsq_indiv_estimates %>% 
+  select(wflow_id, .estimate, id) %>% 
+  pivot_wider(id_cols = "id", names_from = "wflow_id", values_from = ".estimate")
+
+corrr::correlate(rsq_wider %>% select(-id), quiet = TRUE)
+```
+The correlations of the resamples across all models are high but we can still see lower variance between the linear model than for linear vs. rf.
+
+```{r}
+rsq_indiv_estimates %>% 
+  mutate(wflow_id = reorder(wflow_id, .estimate)) %>% 
+  ggplot(aes(x = wflow_id, y = .estimate, group = id, color = id)) + 
+  geom_line(alpha = .5, linewidth = 1.25) + 
+  theme(legend.position = "none")
+```
+Now we will perform a statistical test for the correlations to evaluate whether the correlations are not just noise.
+```{r}
+rsq_wider %>% 
+  with( cor.test(basic_lm, splines_lm) ) %>% 
+  tidy() %>% 
+  select(estimate, starts_with("conf"))
+```
+Based on the outcome the within-sample correlations appear to be real.
+
+An important consideration for choosing between models is the practical effect size, i.e. What is the threshold that defines a realistic change between models? For example, we might think that two models are not considered different if their R² values are within 2%.
+
+### Simple hypothesis testing methods
+We can use simple hypothesis testing methods (like the ANOVA) to make comparisons between models.
+

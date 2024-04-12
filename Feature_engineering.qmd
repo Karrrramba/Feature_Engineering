@@ -181,16 +181,99 @@ Following intuition we partition the Clark/Lake ridership by working days/weeken
 l10_breaks <- scales::trans_breaks("log10", function(x) 10^x)
 l10_labels <- scales::trans_format("log10", scales::math_format(10^.x))
 
-Chicago %>% 
+Chicago <- Chicago %>% 
   mutate(dow =  wday(date, label = TRUE, abbr = TRUE)) %>% 
-  mutate(weekday = if_else(dow %in% c("Sat", "Sun"), 1, 0)) %>% 
-  ggplot(aes(Clark_Lake)) +
+  mutate(weekday = as.factor(if_else(dow %in% c("Sat", "Sun"),"Weekend", "Working Day")))
+
+ggplot(Chicago, aes(Clark_Lake)) +
   geom_histogram(aes(fill  = dow, color = dow)) +
   scale_x_log10(breaks = l10_breaks, labels = l10_labels)+
   facet_wrap(~ weekday, nrow = 2, scales = "free_y") 
 ```
 
 Still we can see data points which the distinction between working day and weekend cannot explain, i.e. the long left tail of the working day distribution. Finding a pattern, which explains the occurrence of these points would improve the predictive model.
+
+### Scatter plots
+
+If the goal is to predict ridership at the Clark/Lake station then, intuitively, we should take into account past ridership information. Since we already know that ridership on working day and on weekends follow different distributions, a one-day lag would be less useful for predicting ridership on Monday or Saturday. Hence, it makes more sense to use a week-based lag since the information occurs on the same day of the week. Because the primary interest is in predicting ridership two weeks in advance, we will create the 14-day lag in ridership.
+
+```{r}
+ridership_scatter <- Chicago %>% 
+  mutate(lag14 = lag(Clark_Lake, n = 14)) %>% 
+  filter(!is.na(lag14)) %>% 
+  ggplot(aes(Clark_Lake, lag14, color = weekday)) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(values = c("pink", "cyan")) +
+  xlab("Current Day (x1000)") +
+  ylab("14-day Lag (x1000)") +
+  theme(legend.title = element_blank()) +
+  coord_equal()
+
+ridership_scatter
+```
+
+We can already recognize a linear relationship between the 14-day lagged and the current ridership. This indicates that the 14-day lag will be a very good predictor for the ridership. Additionally, there are two groups of data point that lie far off the the bulk of points on the diagonal line. Finding a feature that explains the position of these points will be a useful addition to the model.
+
+### Heatmaps
+
+```{r}
+heatmap_data <- Chicago %>% 
+  select(date, weekday, Clark_Lake) %>% 
+  mutate(mmdd = format(as.Date(date), "%m-%d"),
+         yyyy = format(as.Date(date), "%Y"),
+         lt10 = if_else(Clark_Lake < 10 & weekday == "Working Day", 1, 0))
+
+break_vals <- sort(unique(format(as.Date(Chicago$date[format(Chicago$date, "%d") == "01" | format(Chicago$date, "%d") == "15"]), "%m-%d")))
+
+ggplot(heatmap_data, aes(yyyy, mmdd)) +
+  geom_tile(aes(fill = lt10)) +
+  scale_fill_gradient(low = "transparent", high = "red") +
+  scale_y_discrete(
+    breaks = break_vals
+  ) +
+  xlab("Year") +
+  ylab("Month & Day") +
+  theme_bw() + 
+  theme(legend.position = "none")
+```
+
+The working days with low ridership follow a regular pattern across the years. We can deduct that these fall on national holidays. Considering this, we can account for this by creating in indicator variable. \
+We will exclude some common US holidays and re-create the scatterplot from above.
+
+```{r}
+Chicago <- Chicago %>% 
+  mutate(Lag14 = lag(Clark_Lake, n = 14))
+
+commonHolidays <- 
+  c("01-01", "01-02", "01-15", "07-04", 
+    "07-03", "07-05", "10-06", "10-07", 
+    "12-24", "12-25", "12-26", "12-31")
+
+nonhol_scatter <- Chicago %>% 
+  mutate(mmdd = format(as.Date(date), "%m-%d"),
+         Holiday = case_when(
+           mmdd %in% commonHolidays ~ "Holiday",
+           .default = "Non-holiday"),
+         HoliLag = lag(Holiday, n = 14)) %>% 
+  select(!mmdd) %>% 
+  filter(Holiday == "Non-holiday" & HoliLag == "Non-holiday") %>% 
+  ggplot(aes(Clark_Lake, Lag14, color = weekday)) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(values = c("pink", "cyan")) +
+  xlab("Current Ridership (x1000)") +
+  ylab("14-days lag (x1000)") +
+  ggtitle("Without Common Holidays") +
+  theme(legend.position = "none") +
+  coord_equal()
+
+hol_scatter <- ridership_scatter +
+  ggtitle("With Holidays") +
+  theme(legend.position = "none")
+
+gridExtra::grid.arrange(hol_scatter, nonhol_scatter, ncol = 2)
+```
+
+### Correlation Matrix
 
 ## Data Preprocessing
 

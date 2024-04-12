@@ -197,7 +197,7 @@ Still we can see data points which the distinction between working day and weeke
 
 If the goal is to predict ridership at the Clark/Lake station then, intuitively, we should take into account past ridership information. Since we already know that ridership on working day and on weekends follow different distributions, a one-day lag would be less useful for predicting ridership on Monday or Saturday. Hence, it makes more sense to use a week-based lag since the information occurs on the same day of the week. Because the primary interest is in predicting ridership two weeks in advance, we will create the 14-day lag in ridership.
 
-```{r}
+```{r scatter}
 ridership_scatter <- Chicago %>% 
   mutate(lag14 = lag(Clark_Lake, n = 14)) %>% 
   filter(!is.na(lag14)) %>% 
@@ -216,7 +216,7 @@ We can already recognize a linear relationship between the 14-day lagged and the
 
 ### Heatmaps
 
-```{r}
+```{r heatmap}
 heatmap_data <- Chicago %>% 
   select(date, weekday, Clark_Lake) %>% 
   mutate(mmdd = format(as.Date(date), "%m-%d"),
@@ -240,7 +240,7 @@ ggplot(heatmap_data, aes(yyyy, mmdd)) +
 The working days with low ridership follow a regular pattern across the years. We can deduct that these fall on national holidays. Considering this, we can account for this by creating in indicator variable. \
 We will exclude some common US holidays and re-create the scatterplot from above.
 
-```{r}
+```{r nonhol_scatter}
 Chicago <- Chicago %>% 
   mutate(Lag14 = lag(Clark_Lake, n = 14))
 
@@ -256,7 +256,8 @@ nonhol_scatter <- Chicago %>%
            .default = "Non-holiday"),
          HoliLag = lag(Holiday, n = 14)) %>% 
   select(!mmdd) %>% 
-  filter(Holiday == "Non-holiday" & HoliLag == "Non-holiday") %>% 
+  filter(Holiday == "Non-holiday" & HoliLag == "Non-holiday") %>%
+  filter(!is.na(Lag14) & !is.na(HoliLag)) %>% 
   ggplot(aes(Clark_Lake, Lag14, color = weekday)) +
   geom_point(alpha = 0.5) +
   scale_color_manual(values = c("pink", "cyan")) +
@@ -274,6 +275,39 @@ gridExtra::grid.arrange(hol_scatter, nonhol_scatter, ncol = 2)
 ```
 
 ### Correlation Matrix
+
+```{r}
+library()
+
+Chicago <- Chicago %>% 
+  mutate(mmdd = format(as.Date(date), "%m-%d"),
+         Holiday = case_when(
+           mmdd %in% commonHolidays ~ "Holiday",
+           .default = "Non-holiday"),
+         HoliLag = lag(Holiday, n = 14)) %>% 
+  select(!mmdd)
+
+create_lags <- function(x, lag = 14) {
+  x$date <- x$date + days(lag)
+  prefix <- ifelse(lag < 10, paste0("0", lag), lag)
+  prefix <- paste0("l", prefix, "_holiday")
+  names(x) <- gsub("common_holiday", prefix, names(x))
+  x
+}
+
+hol_lag <- create_lags(, lag = 14)
+  
+
+
+cor_mat <- 
+  Chicago %>% 
+  mutate(year = format(as.Date(date), "%Y")) %>% 
+  filter(year == "2016") %>%
+  select(matches("l14_[0-9]"), weekday, Holiday) %>%
+  filter(pow == "Weekday" & common_holiday == "Non-holiday") %>%
+  select(-pow, -common_holiday) %>% 
+  cor()
+```
 
 ## Data Preprocessing
 

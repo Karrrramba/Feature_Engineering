@@ -174,7 +174,7 @@ Facetting, colors and shapes are valuable tools for increasing dimensionality of
 
 Following intuition we partition the Clark/Lake ridership by working days/weekend. This distinction was not part of the original predictor set but it clearly is useful in explaining the dual peak in the distribution we saw before.
 
-```{r}
+```{r scatterplot}
 #| echo: false
 #| warning: false
 
@@ -241,9 +241,6 @@ The working days with low ridership follow a regular pattern across the years. W
 We will exclude some common US holidays and re-create the scatterplot from above.
 
 ```{r nonhol_scatter}
-# Chicago <- Chicago %>% 
-#   mutate(Lag14 = lag(Clark_Lake, n = 14))
-
 common_holidays <- 
   c("01-01", "01-02", "01-15", "07-04", 
     "07-03", "07-05", "10-06", "10-07", 
@@ -301,7 +298,7 @@ gridExtra::grid.arrange(hol_scatter, nonhol_scatter, ncol = 2)
 A correlation matrix can be thought of as an extended version of a scatter plot, which represents the correlation between all variables, combined with a heat map indicating the degree of correlation.
 
 ```{r corrmap}
-library()
+library(RColorBrewer)
 
 cor_mat <- 
   lagged_data %>% 
@@ -313,10 +310,54 @@ cor_mat <-
   select(!c(weekday, Holiday, Lag14_holiday)) %>% 
   cor()
 
+heatmap(as.matrix(cor_mat), symm = TRUE,  
+        col = colorRampPalette(brewer.pal(9, "Blues"))(100))
+legend("bottomleft", 
+       legend = seq(0, 1, length.out = 9), 
+       fill = colorRampPalette(brewer.pal(9, "Blues"))(11), 
+       title = "Correlation", 
+       cex = 0.8)
+```
 
-# cor_map <-
-  heatmap(as.matrix(cor_mat), 
-        col = colorRampPalette(brewer_pal(11, "RdBu"))(100))
+The heatmap shows high correlations for ridership across nearly all stations. Additionally, there is very high correlation (dark blue clusters) between some stations, indicating redundant information, which could be excluded.
+
+### Line Plots
+
+Line plots are a great way of visualizing data with a time component. They can help with identifying time-dependent patterns.
+
+We can investigate how the ridership has changed over the years during the week and on weekends.
+
+```{r lineplot}
+#| echo: false
+
+Chicago %>% 
+  mutate(year = format(as.Date(date), "%Y"),
+         month = month(date, abbr = TRUE, label = TRUE)) %>% 
+  group_by(year, month, weekday) %>% 
+  summarise(n = mean(ridership),
+            .groups = "drop") %>% 
+  ggplot(aes(month, n)) +
+  facet_wrap(~weekday, ncol = 2) +
+  geom_line(aes(group = year, color = year)) +
+  ylab("Mean Ridership") +
+  xlab("") +
+  scale_color_manual(values = colorRampPalette(
+    colors = brewer.pal(n = 9, "YlOrRd")[-1])(16)) + 
+  guides(
+    col = guide_legend(
+      title = "",
+      nrow = 2,
+      byrow = TRUE
+    )) +
+  theme(legend.position = "top")
+
+```
+
+The line plot reveals that ridership has increased continuously from 2001 to 2016. Ridership during the week increase from Jan to Oct then plummet each year. The weekend data fis much more heterogeneous.
+
+```{r }
+Chicago %>% 
+  
 ```
 
 ## Data Preprocessing

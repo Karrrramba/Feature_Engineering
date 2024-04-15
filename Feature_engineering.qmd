@@ -276,7 +276,7 @@ gridExtra::grid.arrange(hol_scatter, nonhol_scatter, ncol = 2)
 
 ### Correlation Matrix
 
-```{r}
+```{r corrmap}
 library()
 
 Chicago <- Chicago %>% 

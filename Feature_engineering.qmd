@@ -237,28 +237,50 @@ ggplot(heatmap_data, aes(yyyy, mmdd)) +
   theme(legend.position = "none")
 ```
 
-The working days with low ridership follow a regular pattern across the years. We can deduct that these fall on national holidays. Considering this, we can account for this by creating in indicator variable. \
+The working days with low ridership follow a regular pattern across the years. We can deduct that these fall on national holidays. Considering this, we can account for this by creating in indicator variable.\
 We will exclude some common US holidays and re-create the scatterplot from above.
 
 ```{r nonhol_scatter}
-Chicago <- Chicago %>% 
-  mutate(Lag14 = lag(Clark_Lake, n = 14))
+# Chicago <- Chicago %>% 
+#   mutate(Lag14 = lag(Clark_Lake, n = 14))
 
-commonHolidays <- 
+common_holidays <- 
   c("01-01", "01-02", "01-15", "07-04", 
     "07-03", "07-05", "10-06", "10-07", 
     "12-24", "12-25", "12-26", "12-31")
 
-nonhol_scatter <- Chicago %>% 
+holiday_data <- Chicago %>% 
   mutate(mmdd = format(as.Date(date), "%m-%d"),
          Holiday = case_when(
-           mmdd %in% commonHolidays ~ "Holiday",
+           mmdd %in% common_holidays ~ "Holiday",
            .default = "Non-holiday"),
-         HoliLag = lag(Holiday, n = 14)) %>% 
-  select(!mmdd) %>% 
-  filter(Holiday == "Non-holiday" & HoliLag == "Non-holiday") %>%
-  filter(!is.na(Lag14) & !is.na(HoliLag)) %>% 
-  ggplot(aes(Clark_Lake, Lag14, color = weekday)) +
+         Lag14_holiday = lag(Holiday, n = 14),
+         Lag14_holiday = if_else(is.na(Lag14_holiday), "Non-holiday", Lag14_holiday )) %>% 
+  select(!mmdd)
+
+create_lags <- function(df, lag = 14, date = FALSE) {
+  prefix <- ifelse(lag < 10, paste0("0", lag), lag)
+  prefix <- paste0("Lag", prefix, "_")
+  # if (date == TRUE) {
+  #   prefix_date <- paste0("Lag", prefix, "_holiday")
+  #   df <- df %>% 
+  #     mutate(!!prefix_date := df$date + days(lag))
+  # }
+  
+  for (station in stations){
+    
+    name <- paste0(prefix, station)
+    df <- df %>% 
+      mutate(!!name := lag(!!sym(station), n = lag))
+  }
+  df
+}
+
+lagged_data <- create_lags(holiday_data, lag = 14)
+  
+nonhol_scatter <- lagged_data %>% 
+  filter(Holiday == "Non-holiday" & Lag14_holiday == "Non-holiday") %>%
+  ggplot(aes(Clark_Lake, Lag14_Clark_Lake, color = weekday)) +
   geom_point(alpha = 0.5) +
   scale_color_manual(values = c("pink", "cyan")) +
   xlab("Current Ridership (x1000)") +
@@ -276,37 +298,25 @@ gridExtra::grid.arrange(hol_scatter, nonhol_scatter, ncol = 2)
 
 ### Correlation Matrix
 
+A correlation matrix can be thought of as an extended version of a scatter plot, which represents the correlation between all variables, combined with a heat map indicating the degree of correlation.
+
 ```{r corrmap}
 library()
 
-Chicago <- Chicago %>% 
-  mutate(mmdd = format(as.Date(date), "%m-%d"),
-         Holiday = case_when(
-           mmdd %in% commonHolidays ~ "Holiday",
-           .default = "Non-holiday"),
-         HoliLag = lag(Holiday, n = 14)) %>% 
-  select(!mmdd)
-
-create_lags <- function(x, lag = 14) {
-  x$date <- x$date + days(lag)
-  prefix <- ifelse(lag < 10, paste0("0", lag), lag)
-  prefix <- paste0("l", prefix, "_holiday")
-  names(x) <- gsub("common_holiday", prefix, names(x))
-  x
-}
-
-hol_lag <- create_lags(, lag = 14)
-  
-
-
 cor_mat <- 
-  Chicago %>% 
+  lagged_data %>% 
   mutate(year = format(as.Date(date), "%Y")) %>% 
   filter(year == "2016") %>%
-  select(matches("l14_[0-9]"), weekday, Holiday) %>%
-  filter(pow == "Weekday" & common_holiday == "Non-holiday") %>%
-  select(-pow, -common_holiday) %>% 
+  select(starts_with("Lag14"), weekday, Holiday) %>%
+  filter(weekday == "Working Day" & 
+           Holiday == "Non-holiday") %>%
+  select(!c(weekday, Holiday, Lag14_holiday)) %>% 
   cor()
+
+
+# cor_map <-
+  heatmap(as.matrix(cor_mat), 
+        col = colorRampPalette(brewer_pal(11, "RdBu"))(100))
 ```
 
 ## Data Preprocessing

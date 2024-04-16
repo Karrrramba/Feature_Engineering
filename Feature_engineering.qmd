@@ -14,6 +14,7 @@ library(caret)
 library(ggdist)
 library(ggthemes)
 library(RColorBrewer)
+library(skimr)
 library(tidymodels)
 library(tidyverse)
 data(Chicago)
@@ -438,12 +439,92 @@ PCA condenses the dataset by finding combinations of variables, which maximize t
 
 ## Visualizations for Categorical Variables
 
-For the visualizations of categorical variables the [OK Cupid dataset](https://github.com/rudeboybert/JSE_OkCupid) will be used.
+For the visualizations of categorical variables the [OKCupid dataset](https://github.com/rudeboybert/JSE_OkCupid) will be used. The dataset contains information on 50 000 profiles from the online dating site OKCupid. The goal is to predict whether the profiles author's occupation is in a STEM field.
 
 ```{r cupid_data}
 #| echo: false
 
-cupid <- read_csv("data/okcupid.csv", name_repair = "unique")
+profiles <- read_csv("data/profiles_revised.csv")
+```
+
+```{r cupid_structure}
+skim(profiles)
+```
+
+### Visualizing Relationships between Outcome and Predictors
+
+If we want to visualize categorical variables, we might choose bar plots to represent counts, proportions and frequencies.
+
+```{r}
+#| echo: false
+
+profiles <- profiles %>% 
+  mutate(job = if_else(job %in% c("science / tech / engineering", "medicine / health") , "stem", "other"))
+```
+
+```{r religion}
+#| echo: false
+
+binom_stats <- function(x, ...) {
+  x <- x$job[!is.na(x$job)]
+  res <- prop.test(x = sum(x == "stem"), n = length(x), ...)
+  data.frame(Proportion  = unname(res$estimate), 
+             Lower = res$conf.int[1],
+             Upper = res$conf.int[2])
+}
+
+job_rates <- profiles %>% 
+    filter(!is.na(job)) %>% 
+    count(job) %>% 
+    mutate(prop = n / sum(n) * 100) 
+
+stem_rate <- job_rates$prop[job_rates$job == "stem"]
+
+religion_rates <- 
+  profiles %>%
+  group_by(religion) %>%
+  do(binom_stats(.)) %>%
+  arrange(Proportion) %>%
+  ungroup() %>%
+  mutate(religion = gsub("religion_", "", religion),
+         religion = reorder(factor(religion), Proportion))
+
+profiles <- 
+  profiles %>% 
+  mutate(
+    religion2 = gsub("religion_", "", as.character(religion)),
+    religion2 = factor(religion2, levels = as.character(religion_rates$religion)))
+```
+
+```{r cupid_barplots}
+
+bars <- 
+  ggplot(profiles, aes(x = religion2, fill = job)) +
+  geom_bar(position = position_dodge()) + 
+  scale_fill_brewer(palette = "Paired") +
+  xlab("") +
+  theme(legend.position = "top", axis.text = element_text(size = 8)) +
+  ggtitle("(a)")
+
+stacked_vars <-
+  ggplot(profiles, aes(x = religion2, fill = job)) + 
+  geom_bar(position = "fill") +
+  scale_fill_brewer(palette = "Paired") +
+  xlab("") + 
+  ylab("Proportion") +
+  theme(legend.position = "none", axis.text = element_text(size = 8)) +
+  ggtitle("(b)")
+
+ci_plots <- 
+  ggplot(religion_rates, aes(x = religion, y = Proportion)) +
+  geom_hline(yintercept = stem_rate, col = "red", alpha = .35, lty = 2) + 
+  geom_point() +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = .1) +
+  theme(axis.text = element_text(size = 8)) +
+  xlab("") +
+  ggtitle("(c)")
+
+gridExtra::grid.arrange(bars, stacked_vars, ci_plots, ncol = 1, heights= c(4, 3, 3))
 ```
 
 ## Data Preprocessing

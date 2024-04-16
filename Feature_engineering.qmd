@@ -330,19 +330,63 @@ We can investigate how the ridership has changed over the years during the week 
 ```{r lineplot}
 #| echo: false
 
-Chicago %>% 
+rider_data <- Chicago %>% 
   mutate(year = format(as.Date(date), "%Y"),
          month = month(date, abbr = TRUE, label = TRUE)) %>% 
   group_by(year, month, weekday) %>% 
   summarise(n = mean(ridership),
-            .groups = "drop") %>% 
+            .groups = "drop")
+
+rider_data %>% 
   ggplot(aes(month, n)) +
   facet_wrap(~weekday, ncol = 2) +
-  geom_line(aes(group = year, color = year)) +
+  geom_line(aes(group = year, color = year), linewidth = 1.5) +
   ylab("Mean Ridership") +
   xlab("") +
   scale_color_manual(values = colorRampPalette(
     colors = brewer.pal(n = 9, "YlOrRd")[-1])(16)) + 
+  guides(
+    col = guide_legend(
+      title = "",
+      nrow = 2,
+      byrow = TRUE)) +
+  theme(legend.position = "top")
+
+```
+
+The line plot reveals that ridership has increased continuously from 2001 to 2016. There are seasonal trends in the data: the numger of passengers during the week increases from January through October then plummets each year. The weekend data is more heterogeneous in this regard, especially during the years 2006 and 2010.
+
+When we look at the z-score of the proportional ridership for each year we discover that in the year 2008 more people chose to ride the train in the summer months compared to other years, while it was the opposite a year later in 2009.
+
+```{r }
+
+z_score <- function(x) {
+  mu <-  mean(x)
+  s <-  sd(x)
+  z <- (x-mu)/s
+  z
+}
+
+Chicago %>% 
+  mutate(year = format(as.Date(date), "%Y"),
+         month = month(date, abbr = TRUE, label = TRUE)) %>% 
+  filter(weekday == "Weekend" &
+           year %in% c(2006:2015)
+           ) %>%
+  group_by(year, month) %>% 
+  summarise(n = mean(ridership),
+            .groups = "drop") %>% 
+  group_by(year) %>% 
+  mutate(total = sum(n),
+         prop = round(n/total * 100, 2)) %>% 
+  ungroup() %>% 
+  group_by(month) %>%
+  mutate(z_sc = z_score(prop)) %>%
+  ungroup() %>%
+  ggplot(aes(month, z_sc)) +
+  geom_line(aes(group = year, color = year), linewidth = 1.5, alpha = 0.5) +
+  ylab("Z-Score Perfcentage Ridership") +
+  xlab("") +
   guides(
     col = guide_legend(
       title = "",
@@ -353,12 +397,13 @@ Chicago %>%
 
 ```
 
-The line plot reveals that ridership has increased continuously from 2001 to 2016. Ridership during the week increase from Jan to Oct then plummet each year. The weekend data fis much more heterogeneous.
+We could speculate that the gas price in 2008 was particularly high and then decreased in the following year. A plot of the mean monthly ridership vs. monthly gas price would test this hypothesis.
 
-```{r }
-Chicago %>% 
-  
-```
+### Principal Component Analysis
+
+PCA is another way to project multidimensional data onto a 2D or 3D space, going beyond visualizing with colors, shapes and/or facets.
+
+PCA condenses the dataset by finding combinations of variables, which maximize the variability in the data.
 
 ## Data Preprocessing
 

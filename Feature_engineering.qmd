@@ -10,9 +10,12 @@ My summary of the [Feature Engineering book by Kuhn and Johnson](https://www.fea
 ```{r}
 #| echo: false
 #| output: false
+library(caret)
+library(ggdist)
+library(ggthemes)
+library(RColorBrewer)
 library(tidymodels)
 library(tidyverse)
-library(caret)
 data(Chicago)
 
 theme_set(theme_minimal())
@@ -131,6 +134,42 @@ y_violin <-
   ylim(-2,29)
 
 gridExtra::grid.arrange(y_hist, y_box, y_violin, nrow = 3)
+```
+
+A "raincloud" plot is an extension to the traditional boxplot, that includes a density plot and a distribution plot.
+
+```{r raincloud}
+#| echo: false
+
+Chicago %>% 
+  mutate(dow =  wday(date, label = TRUE, abbr = TRUE),
+         year = year(date)) %>% 
+  filter(year == 2016) %>% 
+ggplot(aes(factor(dow), Clark_Lake, fill = dow)) +
+  stat_halfeye(
+    adjust = 0.5,
+    justification = -0.2, #adjust position horizontally
+    .width = 0,
+    point_color = NA) +
+  geom_boxplot(aes(fill = dow), 
+               width = 0.12,
+               outlier.color = NA) +
+  stat_dots(side = "left",
+            justification = 1.1,
+            binwidth = NA) + #auto binwidth
+  xlab("") +
+  ylab("Ridership (x1000")+
+  ggtitle("Daily Ridership at the Clark/Lake Station in 2016") +
+  scale_fill_manual(values = colorRampPalette(
+   colors = brewer.pal(n = 7, "YlOrRd")[-1])(7)) +
+  guides(
+    fill = guide_legend(
+      title = "",
+      nrow = 1,
+      byrow = TRUE)) +
+  theme_hc() +
+  theme(legend.position = "top") +
+  coord_flip()
 ```
 
 When the predictors are on the same scale, we can plot them as side-by-side boxplots of violin plots.
@@ -258,14 +297,8 @@ holiday_data <- Chicago %>%
 create_lags <- function(df, lag = 14, date = FALSE) {
   prefix <- ifelse(lag < 10, paste0("0", lag), lag)
   prefix <- paste0("Lag", prefix, "_")
-  # if (date == TRUE) {
-  #   prefix_date <- paste0("Lag", prefix, "_holiday")
-  #   df <- df %>% 
-  #     mutate(!!prefix_date := df$date + days(lag))
-  # }
   
   for (station in stations){
-    
     name <- paste0(prefix, station)
     df <- df %>% 
       mutate(!!name := lag(!!sym(station), n = lag))
@@ -298,8 +331,6 @@ gridExtra::grid.arrange(hol_scatter, nonhol_scatter, ncol = 2)
 A correlation matrix can be thought of as an extended version of a scatter plot, which represents the correlation between all variables, combined with a heat map indicating the degree of correlation.
 
 ```{r corrmap}
-library(RColorBrewer)
-
 cor_mat <- 
   lagged_data %>% 
   mutate(year = format(as.Date(date), "%Y")) %>% 

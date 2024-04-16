@@ -436,6 +436,16 @@ PCA is another way to project multidimensional data onto a 2D or 3D space, going
 
 PCA condenses the dataset by finding combinations of variables, which maximize the variability in the data.
 
+## Visualizations for Categorical Variables
+
+For the visualizations of categorical variables the [OK Cupid dataset](https://github.com/rudeboybert/JSE_OkCupid) will be used.
+
+```{r cupid_data}
+#| echo: false
+
+cupid <- read_csv("data/okcupid.csv", name_repair = "unique")
+```
+
 ## Data Preprocessing
 
 Knowing the characteristics of the data is a crucial step in the modeling process. This encompasses variable distributions, missingness, relationships between variables as well as with the outcome and so on.

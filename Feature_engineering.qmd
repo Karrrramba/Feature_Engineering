@@ -483,48 +483,69 @@ stem_rate <- job_rates$prop[job_rates$job == "stem"]
 religion_rates <- 
   profiles %>%
   group_by(religion) %>%
+  mutate(religion = case_when(
+    str_detect(religion, "agnosticism") ~ "agnosticism",
+    str_detect(religion,"christianity") ~ "christianity",
+    str_detect(religion,"atheism") ~ "atheism",
+    str_detect(religion,"catholicism") ~ "catholicism",
+    str_detect(religion,"hinduism") ~ "hinduism",
+    str_detect(religion,"judaism") ~ "judaism",
+    str_detect(religion,"islam") ~ "islam",
+    str_detect(religion,"buddhism") ~ "buddhism",
+    is.na(religion) ~ "missing", 
+    .default = "other")) %>% 
   do(binom_stats(.)) %>%
   arrange(Proportion) %>%
   ungroup() %>%
-  mutate(religion = gsub("religion_", "", religion),
-         religion = reorder(factor(religion), Proportion))
+  mutate(religion = reorder(factor(religion), Proportion))
 
 profiles <- 
   profiles %>% 
   mutate(
-    religion2 = gsub("religion_", "", as.character(religion)),
-    religion2 = factor(religion2, levels = as.character(religion_rates$religion)))
+    religion2 = case_when(
+     str_detect(religion, "agnosticism") ~ "agnosticism",
+     str_detect(religion, "christianity") ~ "christianity",
+     str_detect(religion, "atheism") ~ "atheism",
+     str_detect(religion, "catholicism") ~ "catholicism",
+     str_detect(religion, "hinduism") ~ "hinduism",
+     str_detect(religion, "judaism") ~ "judaism",
+     str_detect(religion, "islam") ~ "islam",
+     str_detect(religion, "buddhism") ~ "buddhism",
+     is.na(religion) ~ "missing",
+     .default = "other"),
+    religion2 = factor(religion2, levels = as.character(religion_rates$religion))
+  )
+
 ```
 
-```{r cupid_barplots}
+In order to understand whether religion has any influence on the outcome we might plot the ratio of STEM to other jobs for each religion.
 
-bars <- 
-  ggplot(profiles, aes(x = religion2, fill = job)) +
+```{r}
+ggplot(profiles, aes(x = religion2, fill = job)) +
   geom_bar(position = position_dodge()) + 
   scale_fill_brewer(palette = "Paired") +
   xlab("") +
-  theme(legend.position = "top", axis.text = element_text(size = 8)) +
-  ggtitle("(a)")
+  theme(legend.position = "top", axis.text = element_text(size = 8))
+```
 
-stacked_vars <-
-  ggplot(profiles, aes(x = religion2, fill = job)) + 
+However, it is difficult to recognize which ratio of STEM : other is highest. Even when they are ordered from lowest to highest like in the plot above.
+
+```{r}
+ggplot(profiles, aes(x = religion2, fill = job)) + 
   geom_bar(position = "fill") +
   scale_fill_brewer(palette = "Paired") +
   xlab("") + 
   ylab("Proportion") +
-  theme(legend.position = "none", axis.text = element_text(size = 8)) +
-  ggtitle("(b)")
+  theme(legend.position = "none", axis.text = element_text(size = 8))
+```
 
-ci_plots <- 
-  ggplot(religion_rates, aes(x = religion, y = Proportion)) +
+```{r}
+ggplot(religion_rates, aes(x = religion, y = Proportion)) +
   geom_hline(yintercept = stem_rate, col = "red", alpha = .35, lty = 2) + 
   geom_point() +
   geom_errorbar(aes(ymin = Lower, ymax = Upper), width = .1) +
   theme(axis.text = element_text(size = 8)) +
-  xlab("") +
-  ggtitle("(c)")
-
-gridExtra::grid.arrange(bars, stacked_vars, ci_plots, ncol = 1, heights= c(4, 3, 3))
+  xlab("")
 ```
 
 ## Data Preprocessing

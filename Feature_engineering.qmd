@@ -528,25 +528,38 @@ ggplot(profiles, aes(x = religion2, fill = job)) +
   theme(legend.position = "top", axis.text = element_text(size = 8))
 ```
 
-However, it is difficult to recognize which ratio of STEM : other is highest. Even when they are ordered from lowest to highest like in the plot above.
+However, it is difficult to recognize the differences in the ratio of STEM : other fields. Even when they are ordered from highest to lowest like in the plot above.
+
+We could choose to visualize the relative frequencies of STEM profiles as stacked bar plots. Here, it is apparent that the proportion of STEM fields is highest among Hindus. By adding the global proportion of STEM profiles, we can identify those religions where the proportion is higher.
 
 ```{r}
 ggplot(profiles, aes(x = religion2, fill = job)) + 
   geom_bar(position = "fill") +
+  geom_hline(yintercept = stem_rate / 100, 
+             col = "darkred", alpha = .5, 
+             linetype = 2, linewidth = 1) +
   scale_fill_brewer(palette = "Paired") +
   xlab("") + 
   ylab("Proportion") +
-  theme(legend.position = "none", axis.text = element_text(size = 8))
+  theme(legend.position = "none", axis.text = element_text(size = 8)) 
 ```
+
+Still, this does not take into account the uncertainty, which differs based on sample size (compare Islam to Agnosticism for example). In some way this is illustrated by the height of the respective bar, but in no way precise.
+
+By plotting the proportion of STEM profiles and a 95% confidence interval we can illustrate the degree of uncertainty associated with each group, as indicated by the height of the error bar.
 
 ```{r}
 ggplot(religion_rates, aes(x = religion, y = Proportion)) +
-  geom_hline(yintercept = stem_rate, col = "red", alpha = .35, lty = 2) + 
+  geom_hline(yintercept = stem_rate / 100, col = "darkred", alpha = .3, 
+             linetype = 2, linewidth = 1) +
   geom_point() +
   geom_errorbar(aes(ymin = Lower, ymax = Upper), width = .1) +
   theme(axis.text = element_text(size = 8)) +
-  xlab("")
+  xlab("") +
+  ylim(0, 0.3)
 ```
+
+While plotting summary statistics is not the cookie cutter solution to all problems, it does answer our question in this case. Since there are differences between religions, which are also different from pure chance, a relationship to the outcome variable can be assumed.
 
 ## Data Preprocessing
 

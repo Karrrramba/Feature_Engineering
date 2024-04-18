@@ -3,6 +3,9 @@ title: "Feature engineering"
 format: gfm
 editor: visual
 code-tools: true
+execute: 
+  warning: false
+  echo: false
 ---
 
 My summary of the [Feature Engineering book by Kuhn and Johnson](https://www.feat.engineering/).
@@ -17,7 +20,6 @@ library(RColorBrewer)
 library(skimr)
 library(tidymodels)
 library(tidyverse)
-data(Chicago)
 
 theme_set(theme_minimal())
 ```
@@ -61,6 +63,10 @@ Modeling insights to consider: - There is almost never a single model fit or fea
 We will use the Chicago Transit Authority (CTA) “L” train system data to predict ridership numbers for the Clark/Lake stop. For time series data, predictors are often formed by lagging the data. For this application, when predicting day D, predictors were created using the lag–14 data from every station (e.g., ridership at day D−14). Other lags can also be added to the model, if necessary.
 
 ### Visualizations for Numeric Data
+
+```{r}
+data(Chicago)
+```
 
 Univariate visualizations are used to understand the distribution of a single variable. A few common univariate visualizations are box-and-whisker plots (i.e., box plot), violin plots, or histograms.
 
@@ -159,7 +165,7 @@ ggplot(aes(factor(dow), Clark_Lake, fill = dow)) +
             justification = 1.1,
             binwidth = NA) + #auto binwidth
   xlab("") +
-  ylab("Ridership (x1000")+
+  ylab("Ridership (x1000)")+
   ggtitle("Daily Ridership at the Clark/Lake Station in 2016") +
   scale_fill_manual(values = colorRampPalette(
    colors = brewer.pal(n = 7, "YlOrRd")[-1])(7)) +
@@ -442,7 +448,6 @@ PCA condenses the dataset by finding combinations of variables, which maximize t
 For the visualizations of categorical variables the [OKCupid dataset](https://github.com/rudeboybert/JSE_OkCupid) will be used. The dataset contains information on 50 000 profiles from the online dating site OKCupid. The goal is to predict whether the profiles author's occupation is in a STEM field.
 
 ```{r cupid_data}
-#| echo: false
 
 profiles <- read_csv("data/profiles_revised.csv")
 ```
@@ -456,14 +461,12 @@ skim(profiles)
 If we want to visualize categorical variables, we might choose bar plots to represent counts, proportions and frequencies.
 
 ```{r}
-#| echo: false
 
 profiles <- profiles %>% 
   mutate(job = if_else(job %in% c("science / tech / engineering", "medicine / health") , "stem", "other"))
 ```
 
 ```{r religion}
-#| echo: false
 
 binom_stats <- function(x, ...) {
   x <- x$job[!is.na(x$job)]
@@ -520,7 +523,7 @@ profiles <-
 
 In order to understand whether religion has any influence on the outcome we might plot the ratio of STEM to other jobs for each religion.
 
-```{r}
+```{r cat_var}
 ggplot(profiles, aes(x = religion2, fill = job)) +
   geom_bar(position = position_dodge()) + 
   scale_fill_brewer(palette = "Paired") +
@@ -532,7 +535,7 @@ However, it is difficult to recognize the differences in the ratio of STEM : oth
 
 We could choose to visualize the relative frequencies of STEM profiles as stacked bar plots. Here, it is apparent that the proportion of STEM fields is highest among Hindus. By adding the global proportion of STEM profiles, we can identify those religions where the proportion is higher.
 
-```{r}
+```{r cat_stacked_bar}
 ggplot(profiles, aes(x = religion2, fill = job)) + 
   geom_bar(position = "fill") +
   geom_hline(yintercept = stem_rate / 100, 
@@ -548,7 +551,7 @@ Still, this does not take into account the uncertainty, which differs based on s
 
 By plotting the proportion of STEM profiles and a 95% confidence interval we can illustrate the degree of uncertainty associated with each group, as indicated by the height of the error bar.
 
-```{r}
+```{r cat_confint}
 ggplot(religion_rates, aes(x = religion, y = Proportion)) +
   geom_hline(yintercept = stem_rate / 100, col = "darkred", alpha = .3, 
              linetype = 2, linewidth = 1) +
@@ -560,6 +563,79 @@ ggplot(religion_rates, aes(x = religion, y = Proportion)) +
 ```
 
 While plotting summary statistics is not the cookie cutter solution to all problems, it does answer our question in this case. Since there are differences between religions, which are also different from pure chance, a relationship to the outcome variable can be assumed.
+
+#### Visualizing Categorical Output with Numeric Predictors
+
+As an example we will examine the relationship between the outcome and based on the heights. The heights follow a normal distribution and are extremely similar between the two groups.
+
+```{r}
+profiles %>% 
+  filter(!is.na(height)) %>% 
+  ggplot(aes(height, fill = "darkred")) +
+   stat_halfeye(
+    adjust = 0.5,
+    justification = -0.2, #adjust position horizontally
+    .width = 0,
+    point_color = NA) +
+   geom_boxplot(width = 0.12,
+               outlier.color = NA) +
+   stat_dots(side = "left",
+            justification = 1.1,
+            binwidth = NA) + #auto binwidth
+   xlab("Height [in]") +
+   ylab("")+
+   ggtitle("Height Distribution of OKCupid Profiles") +
+   theme_hc() +
+   theme(legend.position = "none")
+```
+
+```{r cat_x_num}
+profiles %>% 
+  ggplot(aes(height)) +
+  geom_histogram() +
+  facet_grid(job~.) +
+  xlab("Height [inches]")
+```
+
+Height seems to be an unlikely predictor of the outcome variable, but the approach does not address the question directly. We directly answer this question we would fit (and visualize) a general additive model, which also gives us the confidence intervals for our prediction.
+
+```{r gam}
+#| eval: false
+
+gam_data <-  profiles %>% 
+  select(height, job) %>% 
+  filter(height > 10) %>% 
+  mutate(job = if_else(job == "stem", 1, 0))
+
+gam_small_set <- gam_data %>% 
+  distinct(height)
+
+gam_model <- mgcv::gam(job ~ s(height), data = gam_data, family = binomial())
+
+gam_small_set <- gam_small_set %>%
+  mutate(
+    link = predict(gam_model, gam_small_set, type = "link"),
+    se = predict(gam_model, gam_small_set, type = "link", se.fit = TRUE)$se.fit,
+    upper = link + qnorm(.975) * se,
+    lower = link - qnorm(.975) * se,
+    lower = binomial()$linkinv(lower),
+    upper = binomial()$linkinv(upper),
+    probability = binomial()$linkinv(link)
+  )
+
+ggplot(gam_small_set, aes(height)) + 
+geom_line(aes(y = probability)) + 
+geom_ribbon(aes(ymin = lower, ymax = upper), fill = "grey", alpha = .5) + 
+geom_hline(yintercept = stem_rate / 100, col = "darkred", alpha = .5, lty = 2)  + 
+theme_bw() + 
+xlab("") 
+```
+
+The black line represents the probability of the logistic regression model, the confidence intervals are represented by the grey area around the fit and the horizontal lines represents the baseline probability of STEM profiles.
+
+The probability to be STEM is generally below that of pure chance, except for a small window between ca. 65-75 inches. As was also apparent from the wider tails of the histograms of other occupations, the probability plummets below 55 inches and above 75 inches of height. The big confidence intervals, i.e. great uncertainty, are indicative of a small number of observations.
+
+Height - at least on its own - is not a good predictor and thus not worth including in a model.
 
 ## Data Preprocessing
 

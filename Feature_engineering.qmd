@@ -13,13 +13,16 @@ My summary of the [Feature Engineering book by Kuhn and Johnson](https://www.fea
 ```{r}
 #| echo: false
 #| output: false
-library(caret)
+# library(caret)
+library(colorspace)
+library(FactoMineR)
 library(ggdist)
 library(ggthemes)
 library(RColorBrewer)
-library(skimr)
+# library(skimr)
 library(tidymodels)
 library(tidyverse)
+library(vcd)
 
 theme_set(theme_minimal())
 ```
@@ -636,6 +639,90 @@ The black line represents the probability of the logistic regression model, the 
 The probability to be STEM is generally below that of pure chance, except for a small window between ca. 65-75 inches. As was also apparent from the wider tails of the histograms of other occupations, the probability plummets below 55 inches and above 75 inches of height. The big confidence intervals, i.e. great uncertainty, are indicative of a small number of observations.
 
 Height - at least on its own - is not a good predictor and thus not worth including in a model.
+
+### Relationships Between Categorical Predictors
+
+Before deciding how to use predictors that contain non-numeric data, it is critical to understand their characteristics and relationships with other predictors. 
+
+Instead of using repeated hypothesis tests of two-way associations like the Chi-square statistic, we can use cross-tabulations in conjunction with visualizations.
+
+We will use two variables from the OKCupid dataset: drug and alcohol consumption. Fist, we compute the contigency table and visualize the results as a mosaic plot.
+
+```{r contingency_table}
+profiles <- profiles %>% 
+  mutate(across(c(drugs, drinks), ~if_else(is.na(.), "missing", .)))
+
+dnd_table <- table("Drugs" = profiles$drugs, "Alcohol" = profiles$drinks) 
+dnd_table
+```
+
+```{r mosaic_plot}
+vcd::mosaic(
+  t(dnd_table),
+  highlighting = TRUE,
+  highlighting_fill = colorspace::rainbow_hcl,
+  margins = unit(c(6, 1, 1, 8), "lines"),
+  labeling = labeling_border(
+    rot_labels = c(90, 0, 0, 0),
+    just_labels = c("left", "right",
+                    "center",  "right"),
+    offset_varnames = unit(c(3, 1, 1, 4), "lines")
+  ),
+  keep_aspect_ratio = FALSE
+)
+```
+
+Omitting missing information in both categories, most people never consume drugs and consume alcohol socially.
+
+While the mosic plot depicts the frequency distributions, a *correspondence analysis* will help us uncover the relationships between the variables. The Chi-square test uses the expected cell counts under the assumption that there is no relationship between the variables and the deviations (residuals) from these expected values to calculate the test statistic. The Chi-square statistic is large when both variables are strongly associated. The correspondence analysis uses the residuals to determine *principle coordinates*, which represent the observed residuals.
+
+Much like in PCA, each axis represents one principle coordinate and the percentage the amount of information the coordinate explains.
+
+Categories near the origin represent the most common value. Less frequently observed levels are located further from the origin.
+
+Values from the same variable, which are located in close proximity are **redundant**. These can potentially be coerced into one value.
+
+Values in close proximity which are from different variables indicate an **association**.
+
+```{r correspondance}
+
+cor_ana <- FactoMineR::CA(dnd_table, graph = F)
+
+ca_drug <- as.data.frame(cor_ana$row$coord)
+ca_drug$Label <- rownames(ca_drug)
+ca_drug$Variable <- "Drugs"
+
+ca_alc <- as.data.frame(cor_ana$col$coord)
+ca_alc$Label <- rownames(ca_alc)
+ca_alc$Variable <- "Alcohol"
+
+ca_rng <- extendrange(c(ca_alc$`Dim 1`, ca_alc$`Dim 2`))
+ca_x <- paste0("Dimension #1 (",
+               round(cor_ana$eig["dim 1", "percentage of variance"], 0),
+               "%)")
+ca_y <- paste0("Dimension #2 (",
+               round(cor_ana$eig["dim 2", "percentage of variance"], 0),
+               "%)")
+
+ca_coord <- rbind(ca_drug, ca_alc)
+
+ggplot(ca_coord, aes(x = `Dim 1`, y = `Dim 2`, col = Variable)) + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  geom_text(aes(label = Label)) + 
+  xlim(ca_rng) + 
+  ylim(ca_rng) + 
+  xlab(ca_x) + 
+  ylab(ca_y) + 
+  theme(legend.position = "top") +
+  coord_equal()
+```
+
+Dimension 1 (x-axis) explains more than half of the Chi-square statistic. Values close to zero indicate the most frequent value, i.e. most people choose to be abstinent from drugs and consume alcohol in social settings. Sporadic drug use and regular alcohol consumption are less frequent and thus located away from zero on the x-axis. Since both values are very close to each other a specific association can be assumed. Another association is seen for regular drug use and very frequent drinking.
+
+The second dimension (y-axis) accounts for one third of the Chi-square statistic. Most of the variation in this dimension is explained by missing values. Since there is very small variability in the second dimension, it can be assumed that the the variables have similar results.
+
+### Post-Modeling Visualization
 
 ## Data Preprocessing
 

@@ -595,9 +595,10 @@ profiles %>%
 ```{r cat_x_num}
 profiles %>% 
   ggplot(aes(height)) +
-  geom_histogram() +
+  geom_histogram(aes(fill = job), color = "black") +
   facet_grid(job~.) +
-  xlab("Height [inches]")
+  xlab("Height [inches]") +
+  theme(legend.position = "none")
 ```
 
 Height seems to be an unlikely predictor of the outcome variable, but the approach does not address the question directly. We directly answer this question we would fit (and visualize) a general additive model, which also gives us the confidence intervals for our prediction.
@@ -674,15 +675,18 @@ vcd::mosaic(
 
 Omitting missing information in both categories, most people never consume drugs and consume alcohol socially.
 
-While the mosic plot depicts the frequency distributions, a *correspondence analysis* will help us uncover the relationships between the variables. The Chi-square test uses the expected cell counts under the assumption that there is no relationship between the variables and the deviations (residuals) from these expected values to calculate the test statistic. The Chi-square statistic is large when both variables are strongly associated. The correspondence analysis uses the residuals to determine *principle coordinates*, which represent the observed residuals.
+While the mosaic plot depicts the frequency distributions, a *correspondence analysis* will help us uncover the relationships between the variables. The Chi-square test uses the expected cell counts under the assumption that there is no relationship between the variables and the deviations (residuals) from these expected values to calculate the test statistic. The Chi-square statistic is large when both variables are strongly associated. The correspondence analysis uses the residuals to determine *principle coordinates*, which represent the observed residuals.
 
 Much like in PCA, each axis represents one principle coordinate and the percentage the amount of information the coordinate explains.
 
 Categories near the origin represent the most common value. Less frequently observed levels are located further from the origin.
 
-Values from the same variable, which are located in close proximity are **redundant**. These can potentially be coerced into one value.
+Values from the same variable, which are located in close proximity are **redundant** (similar). These can potentially be coerced into one value.
 
 Values in close proximity which are from different variables indicate an **association**.
+
+The strength of the correlation can be assessed by the angle between the lines from the origin \
+(x =0, y =0) to the respective points. The wider the angle the more the correlation shifts into negative numbers.
 
 ```{r correspondance}
 
@@ -718,11 +722,55 @@ ggplot(ca_coord, aes(x = `Dim 1`, y = `Dim 2`, col = Variable)) +
   coord_equal()
 ```
 
-Dimension 1 (x-axis) explains more than half of the Chi-square statistic. Values close to zero indicate the most frequent value, i.e. most people choose to be abstinent from drugs and consume alcohol in social settings. Sporadic drug use and regular alcohol consumption are less frequent and thus located away from zero on the x-axis. Since both values are very close to each other a specific association can be assumed. Another association is seen for regular drug use and very frequent drinking.
+Dimension 1 (x-axis) explains more than half of the Chi-square statistic. Values close to zero indicate the most frequent value, i.e. most people choose to be abstinent from drugs and consume alcohol in social settings. Sporadic drug use and regular alcohol consumption are less frequent and thus located away from zero on the x-axis. Since both values are very close to each other a specific association can be assumed. Another very strong association is seen for regular drug use and very frequent drinking.
 
 The second dimension (y-axis) accounts for one third of the Chi-square statistic. Most of the variation in this dimension is explained by missing values. Since there is very small variability in the second dimension, it can be assumed that the the variables have similar results.
 
-### Post-Modeling Visualization
+```{r}
+ca_coord %>% 
+  filter(rownames(ca_coord) %in%  
+           c("often", "very often", "sometimes", "rarely")) %>% 
+  ggplot(aes(x = `Dim 1`, y = `Dim 2`, col = Variable)) + 
+  geom_segment(x = 0, 
+               y = 0, 
+               xend = ca_coord["often", "Dim 1"], 
+               yend = ca_coord["often", "Dim 2"],
+               color = "purple", alpha = 0.5,
+               linetype = 3) +
+  geom_segment(x = 0, 
+               y = 0, 
+               xend = ca_coord["very often", "Dim 1"], 
+               yend = ca_coord["very often", "Dim 2"],
+               color = "purple", alpha = 0.5,
+               linetype = 3) +
+  geom_segment(x = 0, 
+               y = 0, 
+               xend = ca_coord["sometimes", "Dim 1"], 
+               yend = ca_coord["sometimes", "Dim 2"],
+               color = "darkgreen", alpha = 0.5,
+               linetype = 3) +
+  geom_segment(x = 0, 
+               y = 0, 
+               xend = ca_coord["rarely", "Dim 1"], 
+               yend = ca_coord["rarely", "Dim 2"],
+               color = "darkgreen", alpha = 0.5,
+               linetype = 3) +
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  geom_text(aes(label = Label)) + 
+  annotate("text", label = "small angle\n long lines",
+            x = 1.15, y = 0.5, color = "purple") +
+  annotate("text", label = "wide angle\n short lines",
+            x = 0.25, y = -0.175, color = "darkgreen") +
+  xlim(ca_rng) + 
+  ylim(ca_rng) + 
+  xlab(ca_x) + 
+  ylab(ca_y) + 
+  theme(legend.position = "top") +
+  coord_equal()
+```
+
+## Post-Modeling Visualization
 
 ## Data Preprocessing
 

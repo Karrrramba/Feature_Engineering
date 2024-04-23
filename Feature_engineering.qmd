@@ -438,6 +438,18 @@ Chicago %>%
 
 ```
 
+```{r gas_prices_plot}
+gas_prices <- read_csv("data/Chicago_gas_prices.csv", col_types = "Dn")
+str(gas_prices) 
+  mutate(date = format(date, "%m/%d/%Y"))
+  mutate(date = format(as.Date(date), "%Y-%m-%d"))
+  
+  
+  
+Chicago %>% 
+  inner_join(gas_prices, by = join_by(date))
+```
+
 We could speculate that the gas price in 2008 was particularly high and then decreased in the following year. A plot of the mean monthly ridership vs. monthly gas price would test this hypothesis.
 
 ### Principal Component Analysis
@@ -685,7 +697,7 @@ Values from the same variable, which are located in close proximity are **redund
 
 Values in close proximity which are from different variables indicate an **association**.
 
-The strength of the correlation can be assessed by the angle between the lines from the origin \
+The strength of the correlation can be assessed by the angle between the lines from the origin\
 (x =0, y =0) to the respective points. The wider the angle the more the correlation shifts into negative numbers.
 
 ```{r correspondance}
@@ -726,7 +738,7 @@ Dimension 1 (x-axis) explains more than half of the Chi-square statistic. Values
 
 The second dimension (y-axis) accounts for one third of the Chi-square statistic. Most of the variation in this dimension is explained by missing values. Since there is very small variability in the second dimension, it can be assumed that the the variables have similar results.
 
-```{r}
+```{r ca_principle_plot}
 ca_coord %>% 
   filter(rownames(ca_coord) %in%  
            c("often", "very often", "sometimes", "rarely")) %>% 
@@ -771,6 +783,16 @@ ca_coord %>%
 ```
 
 ## Post-Modeling Visualization
+
+Predictions on the assessment data produced during resampling can be used to understand performance of a model and drive the next set of improvements. The Chicago train data will be used to illustrate this process.
+
+We can use model performance metrics to identify those relationships which might be useful to incorporate into our model. The partial regression plot utilizes the residuals from two distinct models and plots them against each other in a scatter plot.
+
+We will split the Chicago train data set into a training set and a testing set. Since the data has a temporal component to it, use a rolling origin forecasting average for cross validation.
+
+```{r chicago_split}
+
+```
 
 ## Data Preprocessing
 
@@ -900,3 +922,83 @@ gridExtra::grid.arrange(a, b, c, ncol = 3)
 ```
 
 Multicollinearity between predictors can be visually inspected by plotting a correlation map. The correlation threshold is chosen at the analysts discretion and may need to be lowered or raised depending on the problem and the model.
+
+## Encoding Categorical Predictors
+
+### Creating Dummy Variables
+
+### Encoding Predictors with Multiple Levels
+
+When dealing with a large number of predictor categories, one-hot encoding would lead to a unnecessarily crowded predictor matrix. If some of the categories have only few observations, e.g. zip codes and population of densely populated urban vs. rural areas, some resamples might not include those rare instances and the corresponding dummy variables would contain exclusively zeros (so-called *zero-variance predictors*). For some models this will result in errors.
+
+Zero-variance predictors can be handled by simply removing them. Although simple, this approach requires *a priori* knowledge of the parameters which will be included in the model.
+
+Potential zero-variance predictors can be identified before dummy encoding. These predictors have few unique values and appear infrequently. The ratio of the most-occurring to the second-most occurring value is a good gauge. A ratio of 19 is a good starting point, which should be adjusted depending on the data.
+
+When rare occurences are not to be eliminated, they can be concatenated into a new category (e.g. "other") when their respective occurrences fall below a predefined threshold.
+
+Hashing is another way to combine predictor categories. Here, the original values are mapped to a smaller set of hash values. These can have binary values (like dummy variables) or signed values with values -1, 0 and 1.
+
+As an example we will map a subset of the user locations from the OKCupid data to 16 new hash features. Each text value corresponds to a unique hash integer value. These integers values are then mapped to their respective feature values using the formula *column = (integer mod 16) + 1*.
+
+```{r feature_hashing}
+library(FeatureHashing)
+
+load("data/okcupid/okc.RData")
+set.seed(1)
+towns <- sample(unique(as.character(okc_train$where_town)), 16)
+
+location <- 
+  okc_train %>% 
+  dplyr::select(where_town) %>% 
+  distinct(where_town) %>% 
+  arrange(where_town)
+```
+
+```{r binary_hashes}
+binary_hashes <-
+  hashed.model.matrix(
+    ~ where_town,
+    data = location,
+    hash.size = 2 ^ 4,
+    signed.hash = FALSE,
+    create.mapping = TRUE
+  )
+
+binary_df <- 
+  binary_hashes %>% 
+  as.matrix() %>% 
+  as_tibble() %>% 
+  bind_cols(location) %>% 
+  dplyr::rename(town = where_town) %>% 
+  dplyr::filter(town %in% towns) %>% 
+  arrange(town)
+
+binary_df
+```
+
+Notice that some hashes are populated only be zeros, e.g. hashes 5 and 6. This is because none of the hash integers created had a corresponding mod 16 remainder. These could be removed, but new values, which are not represented in the training set might end up in one of these columns.
+
+Column12 has more than one category assigned to it. In statistical terms, these categories are said to be *aliased* or *confounded*. Minimizing aliasing is an important aspect of a contrast scheme.
+
+To combat this, we can use a *signed* hash function*.* A zero indicates no association with the feature and +/-1 indicate different values of the original data. While a binary hash wold encode both categories assigned to the same column as 1, the signed hash would assign +1 and -1, respectively. In column 12, we can see how the value for "castro valley" has changed from 1 in the binary hash table above to -1. and now can be distinguished from "oakland" and "pinole" by a regression model. However, the values for "oakland" and "pinole" are still 1 and thus indistinguishable.
+
+```{r signed_hashes}
+signed_hashes <-
+  hashed.model.matrix(
+    ~ where_town,
+    data = location,
+    hash.size = 2 ^ 4,
+    signed.hash = TRUE
+  )
+
+signed_df <- 
+  signed_hashes %>% 
+  as.matrix() %>% 
+  as_tibble() %>% 
+  bind_cols(location) %>% 
+  dplyr::rename(town = where_town) %>% 
+  dplyr::filter(town %in% towns) %>% 
+  arrange(town)
+signed_df
+```

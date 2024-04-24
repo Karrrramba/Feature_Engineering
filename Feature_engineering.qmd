@@ -464,7 +464,7 @@ For the visualizations of categorical variables the [OKCupid dataset](https://gi
 
 ```{r cupid_data}
 
-profiles <- read_csv("data/profiles_revised.csv")
+profiles <- read_csv("data/okcupid/profiles_revised.csv")
 ```
 
 ```{r cupid_structure}
@@ -961,7 +961,6 @@ binary_hashes <-
     ~ where_town,
     data = location,
     hash.size = 2 ^ 4,
-    signed.hash = FALSE,
     create.mapping = TRUE
   )
 
@@ -1001,4 +1000,66 @@ signed_df <-
   dplyr::filter(town %in% towns) %>% 
   arrange(town)
 signed_df
+```
+
+Thus, aliasing remains a challenge when hashing is applied to predictors as it harbors a set of problems:
+
+-   Aliasing is oblivious to relationships between the categories, e.g. whether the categories assigned to the same hash value are in close proximity, or any other associations possible.
+
+-   When multiple categories are coerced to one, significant predictor, it may be very difficult to understand the true effect.
+
+-   Hashing functions disregard the associated frequencies of the respective categories. Thus, a very frequent category may be aliased with one which is infrequent. In this case, the more frequent value will have a stronger effect.
+
+### Supervised Encoding Methods
+
+Supervised encoding methods use the outcome data as a guide for encoding categorical predictors to numeric values. This is especially well suited for predictors with many levels and when new levels are anticipated to appear after modeling, i.e. with new data.
+
+The first method is called *effect encoding* or *likelihood encoding*, in which the effect of each factor level on the outcome is measured and then used for numeric encoding. For a regression problem, this might be the mean or median outcome value for the respective categorical level. For a classification model a glm can be used to estimate the effect of each level by calculating the rate of occurrence of the outcome.
+
+For example, in the OKCupid training data the rate of STEM profiles in Mountain View is 0.53. We can calculate the odd as *p/(1-p) = 0.53/(1 - 0.53) = 0.53/0.47 = 1.125.* As logistic regression models estimate the log odds of the outcome, we can use these as the encoded values. Note that this only works if only one categorical predictor is used in the model. \
+
+```{r}
+okc_train %>% 
+  filter(where_town == "mountain_view") %>% 
+  count(Class) %>% 
+  mutate(p = round(n / sum(n), 2),
+         o = round(p / (1-p), 2),
+         log_o = round(log(o), 2))
+```
+
+The drawback of this method is that levels with just one value will result in a very large log odds value. To address this issue, we can use the quality of the data, i.e. sample size (or variance for numeric predictors), in order to apply a weight to the respective level in order to move its value towards an overall estimate like the mean or median. This so-called *shrinkage method* can also be used to move extreme log-odds values towards the middle of the distribution. \
+One shrinkage method is Bayesian analysis, which uses a *prior distribution* (or short: *prior*) for the estimates. Almost any distribution can be used for the prior, based on expert knowledge or educated assumption. The prior is then blended with the observed data to form the *posterior distribution*.
+
+For the OKCupid data, we choose a normal distribution with a standard deviation of 10 for the log-odds.\
+
+```{r}
+library(embed)
+
+partial_recipe <- 
+  recipe(Class ~ ., data = okc_train) %>%
+  step_lencode_bayes(
+    where_town,
+    outcome = vars(Class),
+    verbose = FALSE,
+    options = list(
+      chains = 5, 
+      iter = 1000, 
+      cores = min(parallel::detectCores(), 5),
+      seed = 123
+    )
+  ) %>%
+  prep()
+
+
+okc_props <- 
+  okc_train %>%
+  group_by(where_town) %>%
+  summarise(
+    rate = mean(Class == "stem"),
+    raw  = log(rate/(1-rate)),
+    n = length(Class)
+  ) %>%
+  mutate(where_town = as.character(where_town))
+
+okc_props
 ```

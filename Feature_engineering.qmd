@@ -13,7 +13,7 @@ My summary of the [Feature Engineering book by Kuhn and Johnson](https://www.fea
 ```{r}
 #| echo: false
 #| output: false
-# library(caret)
+library(caret)
 library(colorspace)
 library(FactoMineR)
 library(ggdist)
@@ -804,6 +804,12 @@ There are many potential issues that can arise with predictors on a continuous s
 
 Another common problem with continuous predictors is multicollinearity. Partial least squares is specifically designed to handle this problem, while multiple linear regression and neural networks are highly adversely affected.
 
+### 1:1 Transformations
+
+One of the many ways numeric predictors can be transformed to improve their utility in a model is to change their scale.
+
+A good example is to scale a highly skewed distribution to a more uniform distribution.
+
 ```{r}
 #| echo: false
 data("segmentationData")
@@ -923,9 +929,121 @@ gridExtra::grid.arrange(a, b, c, ncol = 3)
 
 Multicollinearity between predictors can be visually inspected by plotting a correlation map. The correlation threshold is chosen at the analysts discretion and may need to be lowered or raised depending on the problem and the model.
 
-## Encoding Categorical Predictors
+### One:Many Transformations
 
-### Creating Dummy Variables
+Numeric predictors, much like categorical ones (see below) can be expanded into multiple numeric predictors to improve model performance.
+
+#### Basis Expansions and Splines
+
+A basis expansion can be achieved by deriving a function with linear combinations of a given predictor x. For a cubic expansion with the formula
+
+$$
+f(x) = \sum_{i=1}^3 𝛃_if_i(x) = 𝛃_1x + 𝛃_2x² + 𝛃_3x³
+$$
+
+the original predictor is expanded upon with its squared and cubed versions.
+
+For complex relationships, this global basis expansion, i.e. applied to the predictor across all ranges, might not be sufficiently nuanced.
+
+This can be seen in the relationship between the sale price (outcome) and lot sizes in the Ames housing data. A linear relationship is only seen in the range of $10^{3.75} - 10^{4.25}$ but not on either side of that range.
+
+```{r ames_lot_price}
+data("ames")
+
+ames %>% 
+  mutate(across(c(Lot_Area, Sale_Price), ~ log(., base = 10))) %>%
+  ggplot(aes(Lot_Area, Sale_Price)) +
+  geom_point(alpha = 0.175) +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_bw()+
+  ylab("log10(Sale Price)") +
+  xlab("log10(Lot Area)")
+           
+```
+
+An alternative method for basis expansion are polynomial splines. Here, polynomial (mostly cubic) expansion are applied to pre-defined regions ("knots") of the predictor. These functions are connected at the knots to give a continuous function. The number of knots controls the complexity of the function and the "wiggliness" of the curve. With only few knots the curve can capture more simple trends, while with a higher number of knots complicated functions can adapt well to the data. This can also result in overfitting. The knots are typically chosen based on the percentiles of the data so that the data is distributed uniformly across the regions. For example, for a spline with four regions the knots would be placed at 25, 50 and 75% percentiles.
+
+Below is a representation of the approach using six splines. Each panel in (a) shows the basis function at the respective knot, indicated by the blue vertical lines. Notice that the basis function for the first three knots is 0 (the first function is typically taken as the intercept). For the areas 4 through 6 the functions appear to lay the emphasis on the data outside of the main bulk.
+
+![](data/numeric-ames-ns-1.svg){width="1600" height="700"}
+
+The final form of the spline function is shown in panel (b). A linear trend is noticable in the middle of the point cloud and much weaker relationships outside. The data points on the left side are not represented by the curve particularly well. Here, more knots might be appropriate. The of knots is a hyperparameter that can be tuned and the right number of knots can be determined by cross-validation.
+
+*Smoothing splines* start with a knot at *every single data point* and use a regularization technique (similar to ridge regression) to determine which point should be considered as a knot.
+
+*Generalized additive models* (GAMs) extend generalized linear models (GLMs) by allowing non-linear terms for individual predictors. However, GAMs cannot model interactions between predictors in a traditional sense as this sort of model can descibe very complex relationships between the predictors. *General Additive Mixed Models* can include interaction terms and random effects to describe temporal (repeated measures) and clustering components in the data.\
+GAMs can model nonlinear functions for each predictor with varying complexities.
+
+*Loess,* a supervised regression model, uses a weighted regression across a predictor to estimate nonlinear patterns in the data.
+
+The multivariate adaptive regression spline (MARS) uses a hinge function transformation given as:
+
+$$
+h(x) = xI(x>0)
+$$
+
+where $I$ is a simple indicator function that is x when x is greater than 0, and 0 otherwise.
+
+For the Ames data lot area, if the log(lot_area) is given as $x$ then $h(x - 3.75)$ will set all values of the lot area, which are smaller than 3.75, to zero and all above to $x-3.75$. With the two hinge functions $h(x - 3.75)$ and the inverse $h(3.75 - x)$ we can define knots in the data.
+
+\`pasnip::mars\`
+
+```{r}
+left <- ames %>% 
+  mutate(Lot_Area = log(Lot_Area, base = 10),
+         area_mars = case_when(
+           Lot_Area < 3.75 ~ 3.75 - Lot_Area,
+           .default = 0
+         )) %>% 
+  ggplot(aes(Lot_Area, area_mars)) +
+  geom_point() +
+  scale_x_log10(name = "Lot Area") +
+  theme_bw() +
+  ylab("MARS Feature Value")
+
+right <- ames %>% 
+  mutate(Lot_Area = log(Lot_Area, base = 10),
+         area_mars = case_when(
+           Lot_Area > 3.75 ~ Lot_Area - 3.75,
+           .default = 0
+         )) %>% 
+  ggplot(aes(Lot_Area, area_mars)) +
+  geom_point() +
+  scale_x_log10(name = "Lot Area") +
+  theme_bw() +
+  ylab("MARS Feature Value")
+
+gridExtra::grid.arrange(left, right, ncol = 2)
+```
+
+With two hing function with knots at 3.75 and 4.25 we could recreate the non-linear function from before with separate linear trend in the region below a value of $10^{3.75}$, between  $10^{3.75}$ and $10^{4.25}$ , and above $10^{4.25}$.
+
+These feature generating functions are known in *neural networks* as ReLU (recitfied linear unit) activation functions.
+
+**Basis functions can be effective in modeling nonlinear patterns for a predictor but also very useful for exploratory data analysis. These types of visualizations can guide the model building process by choosing the right function (quadratic, segmented, etc.).**
+
+#### **Binning Numeric Data**
+
+There may be different apparent rationales for binning data, e.g.:
+
+-   There might be a higher chance for a myocardial infarction for people above the age of 60. In such case one might want to create two categories: below 60 y/o and 60+ y/o.
+
+-   Binning might simplify the analysis as no non-linear relationship has to be figured out.
+
+Binning of the data may be accomplished in a number of ways. One can base the desired cut-off values on specific percentiles (median, quartiles, etc.) or ROC curves. Be cautious of the fact that "eye-balling" the break points has a higher chance of overfitting.
+
+Discretizing numeric data is problematic for different reasons:
+
+-   There is seldom an objective rationale for a specific cut-off value. In the example above, one can hardly argue that there would be a higher risk for people of age 59 than 60.
+
+-   When there is no association between the numeric predictor and the outcome, binning increases the probability of "finding" (i.e. creating) an association.
+
+-   It becomes harder for the model to find the true underlying trend.
+
+Discretizing should be done as a last-resort and must be included inside a resampling procedure to find the appropriate break points.
+
+## Encoding Categorical Predictors
 
 ### Encoding Predictors with Multiple Levels
 
@@ -935,7 +1053,7 @@ Zero-variance predictors can be handled by simply removing them. Although simple
 
 Potential zero-variance predictors can be identified before dummy encoding. These predictors have few unique values and appear infrequently. The ratio of the most-occurring to the second-most occurring value is a good gauge. A ratio of 19 is a good starting point, which should be adjusted depending on the data.
 
-When rare occurences are not to be eliminated, they can be concatenated into a new category (e.g. "other") when their respective occurrences fall below a predefined threshold.
+When rare occurrences are not to be eliminated, they can be concatenated into a new category (e.g. "other") when their respective occurrences fall below a predefined threshold.
 
 Hashing is another way to combine predictor categories. Here, the original values are mapped to a smaller set of hash values. These can have binary values (like dummy variables) or signed values with values -1, 0 and 1.
 
@@ -1016,7 +1134,7 @@ Supervised encoding methods use the outcome data as a guide for encoding categor
 
 The first method is called *effect encoding* or *likelihood encoding*, in which the effect of each factor level on the outcome is measured and then used for numeric encoding. For a regression problem, this might be the mean or median outcome value for the respective categorical level. For a classification model a glm can be used to estimate the effect of each level by calculating the rate of occurrence of the outcome.
 
-For example, in the OKCupid training data the rate of STEM profiles in Mountain View is 0.53. We can calculate the odd as *p/(1-p) = 0.53/(1 - 0.53) = 0.53/0.47 = 1.125.* As logistic regression models estimate the log odds of the outcome, we can use these as the encoded values. Note that this only works if only one categorical predictor is used in the model. \
+For example, in the OKCupid training data the rate of STEM profiles in Mountain View is 0.53. We can calculate the odd as *p/(1-p) = 0.53/(1 - 0.53) = 0.53/0.47 = 1.125.* As logistic regression models estimate the log odds of the outcome, we can use these as the encoded values. Note that this only works if only one categorical predictor is used in the model.\
 
 ```{r}
 okc_train %>% 
@@ -1027,7 +1145,7 @@ okc_train %>%
          log_o = round(log(o), 2))
 ```
 
-The drawback of this method is that levels with just one value will result in a very large log odds value. To address this issue, we can use the quality of the data, i.e. sample size (or variance for numeric predictors), in order to apply a weight to the respective level in order to move its value towards an overall estimate like the mean or median. This so-called *shrinkage method* can also be used to move extreme log-odds values towards the middle of the distribution. \
+The drawback of this method is that levels with just one value will result in a very large log odds value. To address this issue, we can use the quality of the data, i.e. sample size (or variance for numeric predictors), in order to apply a weight to the respective level in order to move its value towards an overall estimate like the mean or median. This so-called *shrinkage method* can also be used to move extreme log-odds values towards the middle of the distribution.\
 One shrinkage method is Bayesian analysis, which uses a *prior distribution* (or short: *prior*) for the estimates. Almost any distribution can be used for the prior, based on expert knowledge or educated assumption. The prior is then blended with the observed data to form the *posterior distribution*.
 
 For the OKCupid data, we choose a normal distribution with a standard deviation of 10 for the log-odds.\
@@ -1063,3 +1181,17 @@ okc_props <-
 
 okc_props
 ```
+
+### Dummy Variables vs. Factors in Tree-Based Models
+
+Tree-based models do not require encoding of categorical predictors.
+
+[Kuhn and Johnson](https://bookdown.org/max/FES/categorical-trees.html) tested different models with dummy-encoded and as-is factored categorical variables. For each model a variety of different performance metrics were estimated using resampling as well as the total time to train and tune the model.
+
+![](data/categorical-factors-vs-dummies-acc-1.svg){width="1600" height="400"}
+
+The only significant differences detected were in the time spent training the model.
+
+![](data/categorical-factors-vs-dummies-time-1.svg){width="1600" height="400"}
+
+The recommendation is to leave the predictors as-is and if the model is promising, to also try dummy encoding.
